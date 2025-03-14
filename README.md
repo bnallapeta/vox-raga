@@ -365,29 +365,6 @@ The script will:
 - Send each file's content to the TTS service
 - Save the resulting audio files to the `samples/output` directory
 
-### Using the HTML Audio Player
-
-We also provide a simple HTML player to listen to the generated audio files:
-
-1. **Generate audio files first**
-   ```bash
-   cd samples
-   python test_tts.py --voice p225 --format wav
-   python test_tts.py --voice p225 --format mp3
-   python test_tts.py --voice p225 --format ogg
-   ```
-
-2. **Open the HTML player**
-   ```bash
-   open player.html  # On macOS
-   # Or open it in your browser manually
-   ```
-
-The HTML player allows you to:
-- See the original text for each sample
-- Play the audio in different formats (WAV, MP3, OGG)
-- Compare the quality of different formats
-
 ### Sample Files
 
 The repository includes several sample text files in the `samples/input` directory:
@@ -598,3 +575,68 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Testing
+
+VoxRaga includes comprehensive testing to ensure reliability and performance.
+
+### Unit and Integration Tests
+
+The `tests/` directory contains unit and integration tests for the core functionality:
+
+```bash
+# Run all tests
+pytest
+
+# Run tests with coverage
+pytest --cov=src
+
+# Run specific test categories
+pytest -m unit
+pytest -m api
+pytest -m model
+pytest -m integration
+```
+
+### Manual Testing
+
+The `manual_tests/` directory contains scripts and results for manual testing of the API endpoints:
+
+```bash
+# Install required packages
+pip install requests websocket-client
+
+# Run the manual test script
+cd manual_tests
+python test_new_endpoints.py
+```
+
+The manual tests verify the following endpoints:
+- Batch synthesis (`/batch_synthesize`)
+- Asynchronous synthesis (`/synthesize/async`)
+- WebSocket streaming (`/synthesize/ws`)
+- Voice listing by language (`/voices/{language}`)
+- Default speaker behavior
+
+For detailed results and implementation details, see `manual_tests/test_documentation.md`.
+
+### Sample Testing
+
+The `samples/` directory contains sample text files and scripts for testing the TTS service:
+
+```bash
+# List available voices
+python samples/test_tts.py --list-voices
+
+# Generate audio with a specific voice
+python samples/test_tts.py --voice p225 --format wav
+
+# Run all sample tests
+cd samples
+./run_all_tests.sh
+```
+
+The sample tests will:
+- Read all .txt files from the `samples/input` directory
+- Send each file's content to the TTS service
+- Save the resulting audio files to the `samples/output` directory

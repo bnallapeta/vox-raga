@@ -375,5 +375,57 @@ def test_convert_audio():
                 assert audio_data == b"mock audio data"
 
 
+@pytest.mark.unit
+@pytest.mark.model
+def test_synthesize_with_emotion_and_style():
+    """Test synthesize method with emotion and style parameters."""
+    config = TTSModelConfig()
+    options = SynthesisOptions(
+        language="en",
+        voice="p225",
+        speed=1.0,
+        format="wav",
+        emotion="happy",
+        style="conversational"
+    )
+    text = "Hello, world!"
+    
+    # Create a mock for TTSModelManager
+    mock_manager = MagicMock()
+    mock_model = MagicMock()
+    mock_manager.get_model.return_value = mock_model
+    
+    # Set up the mock model to return audio data
+    mock_model.tts.return_value = (np.zeros(22050, dtype=np.float32), 22050)
+    
+    with patch("src.models.tts_model.TTSModelManager", return_value=mock_manager):
+        with patch.object(TTSSynthesizer, "_convert_audio", return_value=b"audio data"):
+            with patch("time.time", side_effect=[0, 1]):  # Mock time.time to return 0 then 1
+                synthesizer = TTSSynthesizer(config)
+                
+                # Call the method
+                audio_data = synthesizer.synthesize(text, options)
+                
+                # Verify the result
+                assert audio_data == b"audio data"
+                
+                # Get the actual text passed to the TTS model
+                actual_text = mock_model.tts.call_args[1]['text']
+                
+                # Verify that the text was modified with emotion and style tags
+                assert "happy" in actual_text.lower() or "conversational" in actual_text.lower()
+                assert text in actual_text  # Original text should still be present
+                
+                # Verify the model was called with the right parameter names
+                mock_model.tts.assert_called_once()
+                call_kwargs = mock_model.tts.call_args[1]
+                assert call_kwargs['speaker_name'] == options.voice
+                assert call_kwargs['language_name'] == options.language
+                assert call_kwargs['speed'] == options.speed
+                
+                # Verify _convert_audio was called correctly
+                synthesizer._convert_audio.assert_called_once()
+
+
 # Import time for the test_synthesize function
 import time 

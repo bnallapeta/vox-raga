@@ -51,6 +51,15 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Build artifacts
+.build/
+
+# Manual test outputs
+manual_tests/output/
+manual_tests/*.wav
+manual_tests/*.zip
+manual_tests/batch_output/
+
 # Translations
 *.mo
 *.pot

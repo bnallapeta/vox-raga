@@ -50,7 +50,8 @@ class SynthesisOptions(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed multiplier")
     pitch: float = Field(default=1.0, ge=0.5, le=2.0, description="Voice pitch multiplier")
     energy: float = Field(default=1.0, ge=0.5, le=2.0, description="Voice energy/volume")
-    emotion: Optional[str] = Field(default=None, description="Emotion to convey")
+    emotion: Optional[str] = Field(default=None, description="Emotion to convey (e.g., happy, sad, angry, neutral)")
+    style: Optional[str] = Field(default=None, description="Speaking style (e.g., formal, casual, news, storytelling)")
     format: str = Field(default="wav", description="Audio format")
     sample_rate: int = Field(default=22050, description="Audio sample rate")
     
@@ -61,6 +62,28 @@ class SynthesisOptions(BaseModel):
         if len(v) < 2 or len(v) > 5:
             raise ValueError(f"Invalid language code: {v}")
         return v
+    
+    @field_validator("emotion")
+    @classmethod
+    def validate_emotion(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        
+        valid_emotions = ["happy", "sad", "angry", "neutral", "excited", "calm", "fearful", "surprised"]
+        if v.lower() not in valid_emotions:
+            raise ValueError(f"Invalid emotion: {v}. Must be one of {valid_emotions}")
+        return v.lower()
+    
+    @field_validator("style")
+    @classmethod
+    def validate_style(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        
+        valid_styles = ["formal", "casual", "news", "storytelling", "conversational", "instructional"]
+        if v.lower() not in valid_styles:
+            raise ValueError(f"Invalid style: {v}. Must be one of {valid_styles}")
+        return v.lower()
     
     @field_validator("format")
     @classmethod
@@ -74,6 +97,12 @@ class SynthesisOptions(BaseModel):
 class SynthesisRequest(BaseModel):
     """Request model for speech synthesis."""
     text: str = Field(..., description="Text to synthesize")
+    options: SynthesisOptions = Field(default_factory=SynthesisOptions, description="Synthesis options")
+
+
+class BatchSynthesisRequest(BaseModel):
+    """Request model for batch speech synthesis."""
+    texts: List[str] = Field(..., description="List of texts to synthesize")
     options: SynthesisOptions = Field(default_factory=SynthesisOptions, description="Synthesis options")
 
 
