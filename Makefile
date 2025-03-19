@@ -1,151 +1,132 @@
 # Phony targets declaration
-.PHONY: all build push deploy test run clean install install-test help \
-        cluster-deploy cluster-test registry-start registry-stop dev-build \
-        dev-push local-deploy cloud-deploy setup-local run-local test-local \
-        debug-deps debug-container clean-local create-secret show-config venv \
-        cache-clean acr-login acr-build acr-push acr-clean acr-rebuild check-env \
-        clean-artifacts container-info kserve-url test-kserve test-unit test-integration \
-        test-coverage test-report lint
+.PHONY: all build build-cpu build-gpu push push-cpu push-gpu run clean help \
+        build-amd64-cpu build-amd64-gpu
 
-# Core variables
-ACR_NAME ?= bnracr
-REGISTRY_TYPE ?= acr
-REGISTRY_NAME ?= ${ACR_NAME}
-REGISTRY_URL ?= $(if $(filter acr,$(REGISTRY_TYPE)),$(REGISTRY_NAME).azurecr.io,\
-                $(if $(filter ghcr,$(REGISTRY_TYPE)),ghcr.io/${GITHUB_USERNAME},\
-                $(if $(filter dockerhub,$(REGISTRY_TYPE)),docker.io/${DOCKER_USERNAME},\
-                $(REGISTRY_NAME))))
-
-# Image configuration
-IMAGE_NAME ?= tts-service
-TAG ?= latest
-REGISTRY_IMAGE = $(REGISTRY_URL)/$(IMAGE_NAME):$(TAG)
-LOCAL_REGISTRY ?= localhost:5000
-LOCAL_IMAGE_NAME = $(LOCAL_REGISTRY)/$(IMAGE_NAME):$(TAG)
-REGISTRY_SECRET_NAME ?= acr-secret
+# Variables
+IMAGE_NAME ?= vox-raga
+TAG ?= 0.0.1
+PORT ?= 8888
+MODEL_NAME ?= tts_models/en/vctk/vits
 
 # Container runtime configuration
 CONTAINER_RUNTIME ?= $(shell which podman 2>/dev/null || which docker 2>/dev/null)
-CONTAINER_TYPE := $(shell basename $(CONTAINER_RUNTIME))
+REGISTRY ?= docker.io/yourusername
 
-# Build configuration
-PLATFORMS ?= linux/amd64,linux/arm64
-CACHE_DIR ?= $(HOME)/.cache/tts-build
-BUILD_JOBS ?= 2
-
-# Development configuration
-PYTHON ?= python3
-VENV ?= venv
-PIP ?= $(VENV)/bin/pip
-KUBECONFIG ?= ${KUBECONFIG}
-
-# Create cache directories
-$(shell mkdir -p $(CACHE_DIR)/amd64 $(CACHE_DIR)/arm64)
+# Architecture detection
+ARCH := $(shell uname -m)
 
 # Default target
-all: build
+all: build-cpu
 
-# Virtual environment setup
-venv:
-	$(PYTHON) -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+# Run tests
+test:
+	pytest -v tests/
 
-# Local development setup
-setup-local:
-	@echo "Setting up local development environment..."
-	mkdir -p /tmp/tts_models
-	$(PYTHON) -m venv $(VENV)
-	. $(VENV)/bin/activate && pip install --upgrade pip && pip install -r requirements.txt
-
-# Build and push commands
-build:
-	$(CONTAINER_RUNTIME) build -t $(IMAGE_NAME):$(TAG) .
-	$(CONTAINER_RUNTIME) tag $(IMAGE_NAME):$(TAG) $(REGISTRY_IMAGE)
-
-push: check-env
-	$(CONTAINER_RUNTIME) push $(REGISTRY_IMAGE)
-
-# Deployment commands
-deploy: check-env
-	sed -e "s|\$${REGISTRY_IMAGE}|$(REGISTRY_IMAGE)|g" \
-	    -e "s|\$${REGISTRY_SECRET_NAME}|$(REGISTRY_SECRET_NAME)|g" \
-	    k8s/tts-service.yaml | kubectl apply -f -
-
-# Testing commands
-run:
-	$(PYTHON) src/main.py
-
-run-local: setup-local
-	@echo "Starting TTS service locally..."
-	. $(VENV)/bin/activate && $(PYTHON) -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-
-test: test-unit test-integration
-
-test-unit:
-	@echo "Running unit tests..."
-	. $(VENV)/bin/activate && pytest tests/ -m "unit" --cov=src --cov-report=term
-
-test-integration:
-	@echo "Running integration tests..."
-	. $(VENV)/bin/activate && pytest tests/ -m "integration" --cov=src --cov-report=term
-
-test-coverage:
-	@echo "Running tests with coverage..."
-	. $(VENV)/bin/activate && pytest tests/ --cov=src --cov-report=term --cov-report=html
-
-test-report:
-	@echo "Opening coverage report..."
-	open htmlcov/index.html
-
-lint:
-	@echo "Running linters..."
-	. $(VENV)/bin/activate && flake8 src/ tests/
-
-# Cleanup commands
-clean: clean-artifacts clean-local
-	@echo "Clean complete!"
-
-clean-local:
-	rm -rf $(VENV)
-	rm -rf /tmp/tts_models
-	rm -rf __pycache__
-	rm -rf *.pyc
-	rm -rf .pytest_cache
-	rm -rf htmlcov
+# Clean up
+clean:
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete
+	find . -type f -name "*.pyo" -delete
+	find . -type f -name "*.pyd" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	find . -type d -name "*.egg" -exec rm -rf {} +
 	rm -rf .coverage
+	rm -rf htmlcov
+	rm -rf .pytest_cache
 
-# Environment check
-check-env:
-	@if [ -z "$(REGISTRY_URL)" ]; then \
-		echo "Error: REGISTRY_URL is not set"; \
-		exit 1; \
+# Simple build - both CPU and GPU
+build: build-cpu build-gpu
+
+# Build CPU version (for native architecture)
+build-cpu:
+	$(CONTAINER_RUNTIME) build -t $(IMAGE_NAME):$(TAG)-cpu -f Dockerfile.cpu .
+
+# Build GPU version (for native architecture)
+build-gpu:
+	$(CONTAINER_RUNTIME) build -t $(IMAGE_NAME):$(TAG)-gpu -f Dockerfile.gpu .
+
+# Build CPU version specifically for AMD64 architecture
+# This is needed when building on Mac ARM64 for x86_64 targets
+build-amd64-cpu:
+ifeq ($(ARCH),arm64)
+	@echo "Building CPU image for AMD64 architecture from ARM64 Mac..."
+	# For Docker, use buildx
+	if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		docker buildx build --platform=linux/amd64 -t $(IMAGE_NAME):$(TAG)-cpu -f Dockerfile.cpu --load .; \
+	else \
+		# For Podman, just build and warn
+		echo "WARNING: Building with Podman on ARM64 Mac. The resulting image may not work on AMD64 servers."; \
+		podman build -t $(IMAGE_NAME):$(TAG)-cpu -f Dockerfile.cpu .; \
 	fi
+else
+	# On AMD64, just do a normal build
+	$(CONTAINER_RUNTIME) build -t $(IMAGE_NAME):$(TAG)-cpu -f Dockerfile.cpu .
+endif
 
-# Clean artifacts
-clean-artifacts:
-	rm -rf build/ dist/ *.egg-info/
+# Build GPU version specifically for AMD64 architecture
+# This is needed when building on Mac ARM64 for x86_64 targets
+build-amd64-gpu:
+ifeq ($(ARCH),arm64)
+	@echo "Building GPU image for AMD64 architecture from ARM64 Mac..."
+	# For Docker, use buildx
+	if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		docker buildx build --platform=linux/amd64 -t $(IMAGE_NAME):$(TAG)-gpu -f Dockerfile.gpu --load .; \
+	else \
+		# For Podman, just build and warn
+		echo "WARNING: Building with Podman on ARM64 Mac. The resulting image may not work on AMD64 servers."; \
+		podman build -t $(IMAGE_NAME):$(TAG)-gpu -f Dockerfile.gpu .; \
+	fi
+else
+	# On AMD64, just do a normal build
+	$(CONTAINER_RUNTIME) build -t $(IMAGE_NAME):$(TAG)-gpu -f Dockerfile.gpu .
+endif
 
-# Help
+# Push both images
+push: push-cpu push-gpu
+
+# Push CPU image
+push-cpu:
+	$(CONTAINER_RUNTIME) tag $(IMAGE_NAME):$(TAG)-cpu $(REGISTRY)/$(IMAGE_NAME):$(TAG)-cpu
+	$(CONTAINER_RUNTIME) push $(REGISTRY)/$(IMAGE_NAME):$(TAG)-cpu
+
+# Push GPU image
+push-gpu:
+	$(CONTAINER_RUNTIME) tag $(IMAGE_NAME):$(TAG)-gpu $(REGISTRY)/$(IMAGE_NAME):$(TAG)-gpu
+	$(CONTAINER_RUNTIME) push $(REGISTRY)/$(IMAGE_NAME):$(TAG)-gpu
+
+# Run container locally
+run:
+	$(CONTAINER_RUNTIME) run -p $(PORT):$(PORT) \
+		-e SERVER_PORT=$(PORT) \
+		-e MODEL_NAME=$(MODEL_NAME) \
+		-e SERVER_LOG_LEVEL=info \
+		--name $(IMAGE_NAME)-container \
+		$(IMAGE_NAME):$(TAG)-cpu
+
+# Run development server
+dev:
+	python -m uvicorn src.main:app --reload --host 0.0.0.0 --port $(PORT)
+
+# Setup development environment
+setup-dev:
+	python -m venv venv
+	. venv/bin/activate && pip install -r requirements.txt
+
+# Show help
 help:
-	@echo "Available commands:"
-	@echo "  Local Development:"
-	@echo "    make setup-local   - Set up local development environment"
-	@echo "    make run-local     - Run service locally"
-	@echo "    make test          - Run all tests"
-	@echo "    make test-unit     - Run unit tests"
-	@echo "    make test-integration - Run integration tests"
-	@echo "    make test-coverage - Run tests with coverage"
-	@echo "    make test-report   - Open coverage report"
-	@echo "    make lint          - Run linters"
-	@echo ""
-	@echo "  Build and Deploy:"
-	@echo "    make build         - Build container image"
-	@echo "    make push          - Push image to registry"
-	@echo "    make deploy        - Deploy to Kubernetes"
-	@echo ""
-	@echo "  Cleanup:"
-	@echo "    make clean         - Clean up all resources"
-	@echo ""
-	@echo "  Miscellaneous:"
-	@echo "    make help          - Show this help message" 
+	@echo "Available targets:"
+	@echo "  all            : Build CPU Docker image (default)"
+	@echo "  build          : Build both CPU and GPU images"
+	@echo "  build-cpu      : Build CPU Docker image"
+	@echo "  build-gpu      : Build GPU Docker image" 
+	@echo "  build-amd64-cpu: Build CPU image specifically for AMD64 (for ARM64 Mac)"
+	@echo "  build-amd64-gpu: Build GPU image specifically for AMD64 (for ARM64 Mac)"
+	@echo "  push           : Push both CPU and GPU images to registry"
+	@echo "  push-cpu       : Push CPU image to registry"
+	@echo "  push-gpu       : Push GPU image to registry"
+	@echo "  run            : Run container locally (CPU version)"
+	@echo "  dev            : Run development server"
+	@echo "  setup-dev      : Setup development environment"
+	@echo "  clean          : Clean up Python artifacts"
+	@echo "  test           : Run tests"
+	@echo "  help           : Show this help message" 

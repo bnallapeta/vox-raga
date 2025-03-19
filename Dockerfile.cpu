@@ -1,5 +1,8 @@
-# Select the appropriate base image (GPU version)
-FROM ghcr.io/coqui-ai/tts:v0.22.0
+# CPU version of Coqui TTS
+# NOTE: This image is ONLY compatible with x86_64/amd64 architecture.
+# When building on ARM64 Mac, use: make build-amd64-cpu
+
+FROM ghcr.io/coqui-ai/tts-cpu:v0.22.0
 
 # Set up working directory
 WORKDIR /app
@@ -24,6 +27,7 @@ ENV PYTHONPATH=/app \
     MODEL_DOWNLOAD_ROOT=/app/models \
     SERVER_CACHE_DIR=/app/cache \
     MODEL_NAME=tts_models/en/vctk/vits \
+    MODEL_DEVICE=cpu \
     SERVER_LOG_LEVEL=info
 
 # Set Python optimization flags for better performance

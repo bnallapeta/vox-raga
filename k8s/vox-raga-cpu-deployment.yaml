@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vox-raga-models-pvc-cpu
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vox-raga-cache-pvc-cpu
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vox-raga-cpu
+  labels:
+    app: vox-raga-cpu
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vox-raga-cpu
+  template:
+    metadata:
+      labels:
+        app: vox-raga-cpu
+    spec:
+      # Optional: Specify node affinity to avoid GPU nodes
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: nvidia.com/gpu
+      #           operator: DoesNotExist
+      initContainers:
+      - name: init-permissions
+        image: busybox
+        command: ["sh", "-c", "chown -R 1000:1000 /models && chown -R 1000:1000 /cache"]
+        volumeMounts:
+        - name: models-volume
+          mountPath: /models
+        - name: cache-volume
+          mountPath: /cache
+      containers:
+      - name: vox-raga
+        image: your-registry/vox-raga:0.0.1-cpu  # Replace with your registry path
+        ports:
+        - containerPort: 8888
+        resources:
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+        env:
+        - name: SERVER_PORT
+          value: "8888"
+        - name: MODEL_NAME
+          value: "tts_models/en/vctk/vits"
+        - name: MODEL_DOWNLOAD_ROOT
+          value: "/app/models"
+        - name: SERVER_CACHE_DIR
+          value: "/app/cache"
+        - name: MODEL_DEVICE
+          value: "cpu"
+        - name: SERVER_LOG_LEVEL
+          value: "info"
+        volumeMounts:
+        - name: models-volume
+          mountPath: /app/models
+        - name: cache-volume
+          mountPath: /app/cache
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8888
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8888
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: models-volume
+        persistentVolumeClaim:
+          claimName: vox-raga-models-pvc-cpu
+      - name: cache-volume
+        persistentVolumeClaim:
+          claimName: vox-raga-cache-pvc-cpu
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vox-raga-cpu
+spec:
+  selector:
+    app: vox-raga-cpu
+  ports:
+  - port: 8888
+    targetPort: 8888
+  type: ClusterIP 

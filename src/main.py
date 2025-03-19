@@ -29,9 +29,15 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting TTS service", config=config.model_dump())
     
-    # Preload model
+    # Preload model - try, but continue even if it fails to allow for fallbacks
     model_manager = TTSModelManager(config.model)
-    model_manager.get_model()
+    try:
+        logger.info("Pre-loading TTS model at startup")
+        model_manager.get_model()
+        logger.info("TTS model pre-loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to pre-load TTS model at startup: {str(e)}", exc_info=True)
+        logger.warning("Service will continue to start, but TTS functionality may not work correctly until models are available")
     
     yield
     

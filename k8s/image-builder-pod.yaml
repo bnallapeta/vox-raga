@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-builder
+  labels:
+    app: image-builder
+spec:
+  # This pod needs to run on an x86_64/amd64 node, not on ARM64
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  containers:
+  - name: builder
+    image: ubuntu:22.04
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "3600"]  # Keep pod running for 1 hour for build process
+    securityContext:
+      privileged: true  # Needed for Docker-in-Docker
+    volumeMounts:
+    - name: docker-socket
+      mountPath: /var/run/docker.sock
+    - name: dind-storage
+      mountPath: /var/lib/docker
+    - name: build-dir
+      mountPath: /build
+  volumes:
+  - name: docker-socket
+    hostPath:
+      path: /var/run/docker.sock
+      type: Socket
+  - name: dind-storage
+    emptyDir: {}
+  - name: build-dir
+    emptyDir: {}
+  # Terminate after 1 hour (3600 seconds) in case you forget to delete it
+  terminationGracePeriodSeconds: 30
+  activeDeadlineSeconds: 3600 

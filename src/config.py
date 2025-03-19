@@ -16,7 +16,7 @@ class TTSModelConfig(BaseModel):
     compute_type: str = Field(default="float32", description="Compute type")
     cpu_threads: int = Field(default=4, ge=1, description="Number of CPU threads")
     num_workers: int = Field(default=1, ge=1, description="Number of workers")
-    download_root: str = Field(default="/tmp/tts_models", description="Root directory for model downloads")
+    download_root: str = Field(default="/app/models", description="Root directory for model downloads")
     
     @field_validator("model_name")
     @classmethod
@@ -109,11 +109,11 @@ class BatchSynthesisRequest(BaseModel):
 class ServerConfig(BaseModel):
     """Server configuration."""
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: int = Field(default=8000, description="Port to bind to")
+    port: int = Field(default=8888, description="Port to bind to")
     log_level: str = Field(default="info", description="Log level")
     cors_origins: List[str] = Field(default=["*"], description="CORS origins")
     metrics_enabled: bool = Field(default=True, description="Enable metrics")
-    cache_dir: str = Field(default="/tmp/tts_cache", description="Cache directory")
+    cache_dir: str = Field(default="/app/cache", description="Cache directory")
     max_cache_size_mb: int = Field(default=1024, description="Maximum cache size in MB")
 
 
@@ -128,11 +128,11 @@ def load_config() -> AppConfig:
     # Server config
     server_config = ServerConfig(
         host=os.getenv("SERVER_HOST", "0.0.0.0"),
-        port=int(os.getenv("SERVER_PORT", "8000")),
+        port=int(os.getenv("SERVER_PORT", "8888")),
         log_level=os.getenv("SERVER_LOG_LEVEL", "info"),
         cors_origins=os.getenv("SERVER_CORS_ORIGINS", "*").split(","),
         metrics_enabled=os.getenv("SERVER_METRICS_ENABLED", "true").lower() == "true",
-        cache_dir=os.getenv("SERVER_CACHE_DIR", "/tmp/tts_cache"),
+        cache_dir=os.getenv("SERVER_CACHE_DIR", "/app/cache"),
         max_cache_size_mb=int(os.getenv("SERVER_MAX_CACHE_SIZE_MB", "1024")),
     )
     
@@ -143,7 +143,7 @@ def load_config() -> AppConfig:
         compute_type=os.getenv("MODEL_COMPUTE_TYPE", "float32"),
         cpu_threads=int(os.getenv("MODEL_CPU_THREADS", "4")),
         num_workers=int(os.getenv("MODEL_NUM_WORKERS", "1")),
-        download_root=os.getenv("MODEL_DOWNLOAD_ROOT", "/tmp/tts_models"),
+        download_root=os.getenv("MODEL_DOWNLOAD_ROOT", "/app/models"),
     )
     
     return AppConfig(server=server_config, model=model_config)

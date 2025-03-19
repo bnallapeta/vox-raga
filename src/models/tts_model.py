@@ -4,11 +4,11 @@ TTS model module for handling text-to-speech synthesis.
 import io
 import os
 import time
+import json
 from typing import Dict, Any, Optional, List, Tuple
 
 import numpy as np
 import torch
-from TTS.utils.manage import ModelManager
 from TTS.utils.synthesizer import Synthesizer
 
 from src.config import TTSModelConfig, SynthesisOptions
@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 
 class TTSModelManager:
-    """Manager for TTS models."""
+    """Manager for TTS models without depending on ModelManager."""
     
     _instance = None
     
@@ -37,24 +37,67 @@ class TTSModelManager:
             return
         
         self.config = config
-        # Create a path to models.json file instead of just the directory
-        models_file = os.path.join(config.download_root, "models.json")
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(models_file), exist_ok=True)
-        # Create an empty models.json file if it doesn't exist
-        if not os.path.isfile(models_file):
-            with open(models_file, "w") as f:
-                f.write("{}")
-        
-        self.model_manager = ModelManager(models_file)
         self.models: Dict[str, Synthesizer] = {}
         self.default_model = None
         self._initialized = True
         
+        # Check model directory at initialization
+        model_dir = os.path.join(self.config.download_root, "tts_models", "en", "vctk", "vits")
+        if os.path.exists(model_dir):
+            logger.info(f"Model directory exists at: {model_dir}")
+            
+            # List files to verify
+            try:
+                files = os.listdir(model_dir)
+                logger.info(f"Model directory contents: {files}")
+            except Exception as e:
+                logger.warning(f"Failed to list model directory: {e}")
+        else:
+            logger.warning(f"Model directory not found at: {model_dir}")
+            
+            # Check parent directories
+            parent_dir = os.path.dirname(model_dir)
+            while parent_dir and parent_dir != "/" and parent_dir != self.config.download_root:
+                if os.path.exists(parent_dir):
+                    logger.info(f"Parent directory exists: {parent_dir}")
+                    try:
+                        files = os.listdir(parent_dir)
+                        logger.info(f"Parent directory contents: {files}")
+                    except Exception as e:
+                        logger.warning(f"Failed to list parent directory: {e}")
+                    break
+                parent_dir = os.path.dirname(parent_dir)
+            
+            try:
+                # List root directory
+                if os.path.exists(self.config.download_root):
+                    logger.info(f"Root directory contents: {os.listdir(self.config.download_root)}")
+            except Exception as e:
+                logger.warning(f"Failed to list root directory: {e}")
+        
         logger.info("TTS model manager initialized", config=config.model_dump())
     
+    def get_model_paths(self, model_name: str) -> List[str]:
+        """Get all possible paths where a model might be located."""
+        # Standard paths in our configuration
+        paths = [os.path.join(self.config.download_root, *model_name.split("/"))]
+        
+        # Add Coqui's model path format (transforming tts_models/en/vctk/vits to tts_models--en--vctk--vits)
+        coqui_model_id = "--".join(model_name.split("/"))
+        
+        # Common locations where Coqui might store models
+        coqui_paths = [
+            f"/usr/local/lib/python3.8/site-packages/TTS/.models/{coqui_model_id}",
+            f"/usr/local/lib/python3.9/site-packages/TTS/.models/{coqui_model_id}",
+            f"/usr/local/lib/python3.10/site-packages/TTS/.models/{coqui_model_id}",
+        ]
+        
+        paths.extend(coqui_paths)
+        logger.info(f"Checking model paths: {paths}")
+        return paths
+    
     def get_model(self, model_name: Optional[str] = None) -> Synthesizer:
-        """Get a TTS model by name."""
+        """Get a TTS model by name, loading directly from file system."""
         # Use default model if not specified
         if model_name is None:
             model_name = self.config.model_name
@@ -65,31 +108,9 @@ class TTSModelManager:
         
         # Load model
         logger.info("Loading TTS model", model_name=model_name)
-        start_time = time.time()
         
         try:
-            # Get model info
-            model_path, config_path, model_item = self.model_manager.download_model(model_name)
-            vocoder_name = model_item.get("default_vocoder", None)
-            
-            # Load vocoder if needed
-            if vocoder_name is not None:
-                vocoder_path, vocoder_config_path, _ = self.model_manager.download_model(vocoder_name)
-            else:
-                vocoder_path, vocoder_config_path = None, None
-            
-            # Create synthesizer
-            synthesizer = Synthesizer(
-                tts_checkpoint=model_path,
-                tts_config_path=config_path,
-                tts_speakers_file=None,
-                tts_languages_file=None,
-                vocoder_checkpoint=vocoder_path,
-                vocoder_config=vocoder_config_path,
-                encoder_checkpoint="",
-                encoder_config="",
-                use_cuda=self.config.device == "cuda",
-            )
+            synthesizer = self.load_model(model_name)
             
             # Cache model
             self.models[model_name] = synthesizer
@@ -98,8 +119,7 @@ class TTSModelManager:
             if self.default_model is None:
                 self.default_model = synthesizer
             
-            load_time = time.time() - start_time
-            logger.info("TTS model loaded", model_name=model_name, load_time=load_time)
+            logger.info("TTS model loaded successfully", model_name=model_name)
             
             return synthesizer
         
@@ -107,35 +127,158 @@ class TTSModelManager:
             logger.error("Failed to load TTS model", model_name=model_name, error=str(e), exc_info=True)
             raise
     
+    def load_model(self, model_name: str) -> Synthesizer:
+        """Load model from any available location."""
+        start_time = time.time()
+        model_paths = self.get_model_paths(model_name)
+        
+        for path in model_paths:
+            if os.path.exists(path):
+                logger.info(f"Found model at: {path}")
+                
+                # Find model file - check both model_file.pth and model.pth
+                model_file_candidates = ["model_file.pth", "model.pth"]
+                model_path = None
+                for candidate in model_file_candidates:
+                    candidate_path = os.path.join(path, candidate)
+                    if os.path.exists(candidate_path):
+                        model_path = candidate_path
+                        break
+                
+                # Find config file - check both config.json and config_file.json
+                config_file_candidates = ["config.json", "config_file.json"]
+                config_path = None
+                for candidate in config_file_candidates:
+                    candidate_path = os.path.join(path, candidate)
+                    if os.path.exists(candidate_path):
+                        config_path = candidate_path
+                        break
+                
+                if model_path and config_path:
+                    logger.info(f"Using model file: {model_path}")
+                    logger.info(f"Using config file: {config_path}")
+                    
+                    # Create synthesizer
+                    synthesizer = Synthesizer(
+                        tts_checkpoint=model_path,
+                        tts_config_path=config_path,
+                        tts_speakers_file=None,
+                        tts_languages_file=None,
+                        vocoder_checkpoint=None,
+                        vocoder_config=None,
+                        encoder_checkpoint="",
+                        encoder_config="",
+                        use_cuda=self.config.device == "cuda",
+                    )
+                    
+                    load_time = time.time() - start_time
+                    logger.info("TTS model loaded successfully", load_time=load_time)
+                    return synthesizer
+        
+        # If no path worked, try using TTS's built-in model loading
+        try:
+            logger.info(f"Trying to load {model_name} using TTS built-in model loading")
+            synthesizer = Synthesizer(
+                model_name=model_name,
+                tts_checkpoint=None,
+                tts_config_path=None,
+                vocoder_checkpoint=None,
+                vocoder_config=None,
+                encoder_checkpoint=None,
+                encoder_config=None,
+                use_cuda=self.config.device == "cuda",
+            )
+            load_time = time.time() - start_time
+            logger.info("TTS model loaded successfully using built-in loader", load_time=load_time)
+            return synthesizer
+        except Exception as e:
+            logger.error(f"Failed to load model using TTS built-in loader: {str(e)}")
+            raise ValueError(f"Could not find or load model: {model_name}")
+    
     def list_available_models(self) -> List[Dict[str, Any]]:
-        """List all available TTS models."""
-        return self.model_manager.list_tts_models()
+        """List all available TTS models by scanning the filesystem."""
+        models = []
+        tts_models_dir = os.path.join(self.config.download_root, "tts_models")
+        
+        if not os.path.exists(tts_models_dir):
+            logger.warning(f"TTS models directory not found: {tts_models_dir}")
+            return models
+        
+        try:
+            # Walk through the directory structure to find models
+            for lang_dir in os.listdir(tts_models_dir):
+                lang_path = os.path.join(tts_models_dir, lang_dir)
+                if not os.path.isdir(lang_path):
+                    continue
+                
+                for dataset_dir in os.listdir(lang_path):
+                    dataset_path = os.path.join(lang_path, dataset_dir)
+                    if not os.path.isdir(dataset_path):
+                        continue
+                    
+                    for model_dir in os.listdir(dataset_path):
+                        model_path = os.path.join(dataset_path, model_dir)
+                        if not os.path.isdir(model_path):
+                            continue
+                        
+                        # Check if this directory contains a valid model
+                        has_model = any(
+                            os.path.exists(os.path.join(model_path, f)) 
+                            for f in ["model.pth", "model_file.pth"]
+                        )
+                        has_config = any(
+                            os.path.exists(os.path.join(model_path, f)) 
+                            for f in ["config.json", "config_file.json"]
+                        )
+                        
+                        if has_model and has_config:
+                            model_name = f"tts_models/{lang_dir}/{dataset_dir}/{model_dir}"
+                            models.append({
+                                "model_name": model_name,
+                                "language": lang_dir,
+                                "dataset": dataset_dir,
+                                "model_type": model_dir,
+                                "description": f"TTS model for {lang_dir} language from {dataset_dir} dataset using {model_dir}"
+                            })
+            
+            return models
+        except Exception as e:
+            logger.warning(f"Error listing TTS models: {str(e)}")
+            return models
     
     def list_available_voices(self, model_name: Optional[str] = None) -> List[str]:
         """List all available voices for a model."""
-        model = self.get_model(model_name)
-        
-        # Check if model has speakers
-        if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager is not None:
-            return model.tts_model.speaker_manager.speaker_names
-        
-        return ["default"]
+        try:
+            model = self.get_model(model_name)
+            
+            # Check if model has speakers
+            if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager is not None:
+                return model.tts_model.speaker_manager.speaker_names
+            
+            return ["default"]
+        except Exception as e:
+            logger.warning(f"Error listing voices: {str(e)}")
+            return ["default"]
     
     def list_available_languages(self, model_name: Optional[str] = None) -> List[str]:
         """List all available languages for a model."""
-        model = self.get_model(model_name)
-        
-        # Check if model has languages
-        if hasattr(model.tts_model, "language_manager") and model.tts_model.language_manager is not None:
-            return model.tts_model.language_manager.language_names
-        
-        # Try to infer from model name
-        if model_name and "/" in model_name:
-            parts = model_name.split("/")
-            if len(parts) > 1:
-                return [parts[1]]
-        
-        return ["en"]
+        try:
+            model = self.get_model(model_name)
+            
+            # Check if model has languages
+            if hasattr(model.tts_model, "language_manager") and model.tts_model.language_manager is not None:
+                return model.tts_model.language_manager.language_names
+            
+            # Try to infer from model name
+            if model_name and "/" in model_name:
+                parts = model_name.split("/")
+                if len(parts) > 1:
+                    return [parts[1]]
+            
+            return ["en"]
+        except Exception as e:
+            logger.warning(f"Error listing languages: {str(e)}")
+            return ["en"]
 
 
 class TTSSynthesizer:
