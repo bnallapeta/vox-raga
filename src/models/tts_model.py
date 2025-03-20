@@ -159,6 +159,90 @@ class TTSModelManager:
                     logger.info(f"Using config file: {config_path}")
                     
                     # Create synthesizer
+                    try:
+                        # TTS v0.22.0 compatible initialization
+                        synthesizer = Synthesizer(
+                            tts_checkpoint=model_path,
+                            tts_config_path=config_path,
+                            tts_speakers_file=None,
+                            tts_languages_file=None,
+                            vocoder_checkpoint=None,
+                            vocoder_config=None,
+                            encoder_checkpoint="",
+                            encoder_config="",
+                            use_cuda=self.config.device == "cuda",
+                        )
+                        
+                        load_time = time.time() - start_time
+                        logger.info("TTS model loaded successfully", load_time=load_time)
+                        return synthesizer
+                    except Exception as e:
+                        logger.error(f"Failed to load model using direct paths: {e}")
+        
+        # If no path worked, try downloading without using ModelManager
+        try:
+            logger.info(f"Attempting manual download for {model_name}")
+            
+            # Parse model components from name
+            if len(model_name.split('/')) >= 4:
+                _, language, dataset, model_type = model_name.split('/')[:4]
+                
+                # Define model directory
+                model_dir = os.path.join(self.config.download_root, "tts_models", language, dataset, model_type)
+                os.makedirs(model_dir, exist_ok=True)
+                
+                # Define model file URLs - using Hugging Face repo URLs which are more reliable
+                if language == "en" and dataset == "vctk" and model_type == "vits":
+                    # URLs for the vctk/vits model from Hugging Face
+                    model_files = {
+                        "config.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/config.json",
+                        "model.pth": "https://huggingface.co/coqui/VITS-vctk/resolve/main/model.pth",
+                        "speakers_map.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/speakers_map.json",
+                        "language_ids.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/language_ids.json",
+                    }
+                else:
+                    # Fallback to the old URL pattern for other models (though they might also need to be updated)
+                    model_files = {
+                        "config.json": f"https://coqui.gateway.scarf.sh/models/tts_models/{language}/{dataset}/{model_type}/config.json",
+                        "model.pth": f"https://coqui.gateway.scarf.sh/models/tts_models/{language}/{dataset}/{model_type}/model.pth",
+                    }
+                
+                # Download files if needed
+                files_downloaded = False
+                for filename, url in model_files.items():
+                    target_path = os.path.join(model_dir, filename)
+                    
+                    # Skip if file already exists
+                    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                        logger.info(f"Using existing file {target_path}")
+                        continue
+                    
+                    logger.info(f"Downloading {url} to {target_path}")
+                    try:
+                        # Try using the TTS download_file function if available (handles authentication and redirects better)
+                        try:
+                            from TTS.utils.manage import download_file
+                            download_file(url, target_path)
+                            files_downloaded = True
+                            logger.info(f"Downloaded {filename} using TTS download_file")
+                        except ImportError:
+                            # Fall back to urllib if TTS.utils.manage.download_file is not available
+                            import urllib.request
+                            urllib.request.urlretrieve(url, target_path)
+                            files_downloaded = True
+                            logger.info(f"Downloaded {filename} using urllib")
+                    except Exception as e:
+                        logger.warning(f"Failed to download {filename}: {e}")
+                        # Continue with other files, even if one fails
+                
+                # Check if we have the minimum required files
+                if os.path.exists(os.path.join(model_dir, "config.json")) and os.path.exists(os.path.join(model_dir, "model.pth")):
+                    model_path = os.path.join(model_dir, "model.pth")
+                    config_path = os.path.join(model_dir, "config.json")
+                    
+                    logger.info(f"Using model files: Model={model_path}, Config={config_path}")
+                    
+                    # Create synthesizer
                     synthesizer = Synthesizer(
                         tts_checkpoint=model_path,
                         tts_config_path=config_path,
@@ -172,40 +256,11 @@ class TTSModelManager:
                     )
                     
                     load_time = time.time() - start_time
-                    logger.info("TTS model loaded successfully", load_time=load_time)
+                    message = "Downloaded and loaded" if files_downloaded else "Loaded pre-existing"
+                    logger.info(f"TTS model {message} successfully", load_time=load_time)
                     return synthesizer
-        
-        # If no path worked, try using TTS's download capability
-        try:
-            logger.info(f"Trying to download {model_name} using TTS directly")
-            # Split model_name into components: tts_models/en/vctk/vits
-            # We need these components for the download_model function
-            if len(model_name.split('/')) >= 4:
-                _, language, dataset, model_type = model_name.split('/')[:4]
-                
-                # Import TTS download utilities
-                from TTS.utils.manage import ModelManager
-                
-                # Use ModelManager to download the model
-                model_manager = ModelManager(os.path.join(self.config.download_root))
-                model_path, config_path, _ = model_manager.download_model(model_type, language=language, dataset=dataset)
-                
-                # Create synthesizer with the downloaded model
-                synthesizer = Synthesizer(
-                    tts_checkpoint=model_path,
-                    tts_config_path=config_path,
-                    tts_speakers_file=None,
-                    tts_languages_file=None,
-                    vocoder_checkpoint=None,
-                    vocoder_config=None,
-                    encoder_checkpoint="",
-                    encoder_config="",
-                    use_cuda=self.config.device == "cuda",
-                )
-                
-                load_time = time.time() - start_time
-                logger.info("TTS model downloaded and loaded successfully", load_time=load_time)
-                return synthesizer
+                else:
+                    raise ValueError(f"Required model files not found after download attempts")
             else:
                 raise ValueError(f"Invalid model name format: {model_name}")
         except Exception as e:

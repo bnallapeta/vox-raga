@@ -1,6 +1,5 @@
 # GPU version of Coqui TTS
 # NOTE: This image is ONLY compatible with x86_64/amd64 architecture and requires NVIDIA GPU support.
-# When building on ARM64 Mac, use: make build-amd64-gpu
 
 FROM ghcr.io/coqui-ai/tts:v0.22.0
 
@@ -17,8 +16,6 @@ RUN grep -v "TTS==" requirements.txt > requirements_no_tts.txt && \
     pip install --no-cache-dir TTS==0.22.0 && \
     # Verify TTS is installed correctly
     python3 -c "import TTS; print(f'TTS {TTS.__version__} installed successfully')" && \
-    # Pre-download the TTS model during image build
-    python3 -c "from TTS.utils.manage import ModelManager; model_path, config_path, _ = ModelManager('/app/models').download_model('vits', language='en', dataset='vctk'); print(f'Model downloaded to {model_path}')" && \
     # Find Python binary location
     PYTHON_BIN=$(which python3) && \
     # Create a script that locates Python and directly calls it
@@ -33,20 +30,18 @@ RUN grep -v "TTS==" requirements.txt > requirements_no_tts.txt && \
     echo "# Use the direct path to the Python binary" >> /app/entrypoint.sh && \
     echo "PYTHON_BIN=$PYTHON_BIN" >> /app/entrypoint.sh && \
     echo 'echo "Using Python binary: $PYTHON_BIN"' >> /app/entrypoint.sh && \
+    echo '# List model directory contents for debugging' >> /app/entrypoint.sh && \
+    echo 'echo "Available models in /app/models:"' >> /app/entrypoint.sh && \
+    echo 'find /app/models -type f | sort' >> /app/entrypoint.sh && \
     echo "# Start the application with the clean PATH" >> /app/entrypoint.sh && \
     echo 'exec env PATH="$CLEAN_PATH" "$PYTHON_BIN" -m uvicorn src.main:app --host 0.0.0.0 --port ${SERVER_PORT:-8888}' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 
-# Create a non-root user
-RUN adduser --disabled-password --gecos "" appuser
-
 # Copy application code
 COPY src/ /app/src/
 
-# Create model and cache directories with proper permissions
-RUN mkdir -p /app/models /app/cache && \
-    chown -R appuser:appuser /app/models /app/cache && \
-    chown appuser:appuser /app/entrypoint.sh
+# Create model and cache directories
+RUN mkdir -p /app/models /app/cache
 
 # Environment variables - add /root to PYTHONPATH to fix TTS import issues
 ENV PYTHONPATH=/app:/root \
@@ -60,9 +55,6 @@ ENV PYTHONPATH=/app:/root \
 # Set Python optimization flags for better performance
 ENV PYTHONUNBUFFERED=1 \
     PYTHONOPTIMIZE=1
-
-# Switch to non-root user
-USER appuser
 
 # Expose port
 EXPOSE 8888
