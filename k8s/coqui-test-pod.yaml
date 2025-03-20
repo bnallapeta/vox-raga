@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: coqui-test-pod
+  labels:
+    app: coqui-test
+spec:
+  restartPolicy: Never
+  containers:
+  - name: coqui-test
+    image: bnracr.azurecr.io/vox-raga:0.0.2
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "sleep 3600"
+    resources:
+      limits:
+        cpu: "300m"
+        memory: "2Gi"
+      requests:
+        cpu: "100m"
+        memory: "1Gi" 

@@ -1,0 +1,77 @@
+# Fixed version that doesn't use the Coqui TTS base image
+# NOTE: This image is ONLY compatible with x86_64/amd64 architecture.
+
+FROM ubuntu:22.04
+
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    git \
+    wget \
+    libsndfile1 \
+    ffmpeg \
+    espeak-ng \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up working directory
+WORKDIR /app
+
+# Create a non-root user
+RUN useradd -m -u 1000 -s /bin/bash appuser
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt && \
+    # Create a detailed startup script
+    echo '#!/bin/bash' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
+    echo 'echo "Starting Vox-Raga TTS service..."' >> /app/entrypoint.sh && \
+    echo 'echo "Python version: $(python3 --version)"' >> /app/entrypoint.sh && \
+    echo 'echo "TTS version: $(python3 -c "import TTS; print(TTS.__version__)")"' >> /app/entrypoint.sh && \
+    echo 'echo "PATH: $PATH"' >> /app/entrypoint.sh && \
+    echo 'echo "Current user: $(whoami)"' >> /app/entrypoint.sh && \
+    echo 'python3 -m uvicorn src.main:app --host 0.0.0.0 --port ${SERVER_PORT:-8888}' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# Copy application code
+COPY src/ /app/src/
+
+# Create model and cache directories with proper permissions
+RUN mkdir -p /app/models /app/cache && \
+    chown -R appuser:appuser /app && \
+    chown appuser:appuser /app/entrypoint.sh
+
+# Environment variables
+ENV PYTHONPATH=/app \
+    SERVER_PORT=8888 \
+    MODEL_DOWNLOAD_ROOT=/app/models \
+    SERVER_CACHE_DIR=/app/cache \
+    MODEL_NAME=tts_models/en/vctk/vits \
+    MODEL_DEVICE=cpu \
+    SERVER_LOG_LEVEL=info
+
+# Set Python optimization flags for better performance
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONOPTIMIZE=1
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8888
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
+
+# Use the custom entrypoint script
+ENTRYPOINT ["/app/entrypoint.sh"] 

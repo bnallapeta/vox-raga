@@ -10,7 +10,7 @@ MODEL_NAME ?= tts_models/en/vctk/vits
 
 # Container runtime configuration
 CONTAINER_RUNTIME ?= $(shell which podman 2>/dev/null || which docker 2>/dev/null)
-REGISTRY ?= docker.io/yourusername
+REGISTRY ?= bnracr.azurecr.io
 
 # Architecture detection
 ARCH := $(shell uname -m)

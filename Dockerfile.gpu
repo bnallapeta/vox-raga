@@ -9,7 +9,33 @@ WORKDIR /app
 
 # Copy requirements and install additional dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies but exclude TTS as it's already in the base image
+RUN grep -v "TTS==" requirements.txt > requirements_no_tts.txt && \
+    pip install --no-cache-dir -r requirements_no_tts.txt && \
+    # Fix the TTS package by reinstalling it properly with pip
+    pip uninstall -y TTS && \
+    pip install --no-cache-dir TTS==0.22.0 && \
+    # Verify TTS is installed correctly
+    python3 -c "import TTS; print(f'TTS {TTS.__version__} installed successfully')" && \
+    # Pre-download the TTS model during image build
+    python3 -c "from TTS.utils.manage import ModelManager; model_path, config_path, _ = ModelManager('/app/models').download_model('vits', language='en', dataset='vctk'); print(f'Model downloaded to {model_path}')" && \
+    # Find Python binary location
+    PYTHON_BIN=$(which python3) && \
+    # Create a script that locates Python and directly calls it
+    echo '#!/bin/bash' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
+    echo 'echo "Starting Vox-Raga TTS service..."' >> /app/entrypoint.sh && \
+    echo "# Save the original PATH but remove /usr/local/bin to avoid TTS command" >> /app/entrypoint.sh && \
+    echo 'export CLEAN_PATH=$(echo $PATH | sed "s|/usr/local/bin:||g")' >> /app/entrypoint.sh && \
+    echo "# Temporarily use the clean PATH" >> /app/entrypoint.sh && \
+    echo 'export PATH="$CLEAN_PATH"' >> /app/entrypoint.sh && \
+    echo 'echo "Modified PATH: $PATH"' >> /app/entrypoint.sh && \
+    echo "# Use the direct path to the Python binary" >> /app/entrypoint.sh && \
+    echo "PYTHON_BIN=$PYTHON_BIN" >> /app/entrypoint.sh && \
+    echo 'echo "Using Python binary: $PYTHON_BIN"' >> /app/entrypoint.sh && \
+    echo "# Start the application with the clean PATH" >> /app/entrypoint.sh && \
+    echo 'exec env PATH="$CLEAN_PATH" "$PYTHON_BIN" -m uvicorn src.main:app --host 0.0.0.0 --port ${SERVER_PORT:-8888}' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
 
 # Create a non-root user
 RUN adduser --disabled-password --gecos "" appuser
@@ -19,10 +45,11 @@ COPY src/ /app/src/
 
 # Create model and cache directories with proper permissions
 RUN mkdir -p /app/models /app/cache && \
-    chown -R appuser:appuser /app/models /app/cache
+    chown -R appuser:appuser /app/models /app/cache && \
+    chown appuser:appuser /app/entrypoint.sh
 
-# Environment variables
-ENV PYTHONPATH=/app \
+# Environment variables - add /root to PYTHONPATH to fix TTS import issues
+ENV PYTHONPATH=/app:/root \
     SERVER_PORT=8888 \
     MODEL_DOWNLOAD_ROOT=/app/models \
     SERVER_CACHE_DIR=/app/cache \
@@ -44,5 +71,5 @@ EXPOSE 8888
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8888/health || exit 1
 
-# Run FastAPI application
-CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8888"] 
+# Use the custom entrypoint script
+ENTRYPOINT ["/app/entrypoint.sh"] 

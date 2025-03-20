@@ -175,24 +175,41 @@ class TTSModelManager:
                     logger.info("TTS model loaded successfully", load_time=load_time)
                     return synthesizer
         
-        # If no path worked, try using TTS's built-in model loading
+        # If no path worked, try using TTS's download capability
         try:
-            logger.info(f"Trying to load {model_name} using TTS built-in model loading")
-            synthesizer = Synthesizer(
-                model_name=model_name,
-                tts_checkpoint=None,
-                tts_config_path=None,
-                vocoder_checkpoint=None,
-                vocoder_config=None,
-                encoder_checkpoint=None,
-                encoder_config=None,
-                use_cuda=self.config.device == "cuda",
-            )
-            load_time = time.time() - start_time
-            logger.info("TTS model loaded successfully using built-in loader", load_time=load_time)
-            return synthesizer
+            logger.info(f"Trying to download {model_name} using TTS directly")
+            # Split model_name into components: tts_models/en/vctk/vits
+            # We need these components for the download_model function
+            if len(model_name.split('/')) >= 4:
+                _, language, dataset, model_type = model_name.split('/')[:4]
+                
+                # Import TTS download utilities
+                from TTS.utils.manage import ModelManager
+                
+                # Use ModelManager to download the model
+                model_manager = ModelManager(os.path.join(self.config.download_root))
+                model_path, config_path, _ = model_manager.download_model(model_type, language=language, dataset=dataset)
+                
+                # Create synthesizer with the downloaded model
+                synthesizer = Synthesizer(
+                    tts_checkpoint=model_path,
+                    tts_config_path=config_path,
+                    tts_speakers_file=None,
+                    tts_languages_file=None,
+                    vocoder_checkpoint=None,
+                    vocoder_config=None,
+                    encoder_checkpoint="",
+                    encoder_config="",
+                    use_cuda=self.config.device == "cuda",
+                )
+                
+                load_time = time.time() - start_time
+                logger.info("TTS model downloaded and loaded successfully", load_time=load_time)
+                return synthesizer
+            else:
+                raise ValueError(f"Invalid model name format: {model_name}")
         except Exception as e:
-            logger.error(f"Failed to load model using TTS built-in loader: {str(e)}")
+            logger.error(f"Failed to download and load model: {str(e)}")
             raise ValueError(f"Could not find or load model: {model_name}")
     
     def list_available_models(self) -> List[Dict[str, Any]]:

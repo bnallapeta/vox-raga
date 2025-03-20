@@ -1,25 +1,3 @@
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: vox-raga-models-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: vox-raga-cache-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -99,11 +77,9 @@ spec:
           periodSeconds: 10
       volumes:
       - name: models-volume
-        persistentVolumeClaim:
-          claimName: vox-raga-models-pvc
+        emptyDir: {}  # Using emptyDir instead of PVC
       - name: cache-volume
-        persistentVolumeClaim:
-          claimName: vox-raga-cache-pvc
+        emptyDir: {}  # Using emptyDir instead of PVC
 ---
 apiVersion: v1
 kind: Service
