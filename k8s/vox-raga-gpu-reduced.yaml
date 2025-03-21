@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: vox-raga
-        image: bnracr.azurecr.io/vox-raga:0.0.18
+        image: bnracr.azurecr.io/vox-raga:0.0.20
         imagePullPolicy: Always
         resources:
           limits:

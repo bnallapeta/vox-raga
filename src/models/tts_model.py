@@ -539,7 +539,7 @@ class TTSModelManager:
                                     logger.warning(f"Output is not a numpy array, type: {type(output)}, using silence")
                                     return np.zeros(22050)  # 1 second of silence
                     except Exception as e:
-                        logger.error(f"Error with direct inference: {e}")
+                        logger.error(f"Error during direct inference with embedding: {e}")
                 
                 # If we have a reference audio, but not in the correct format, convert it
                 if speaker_wav is not None and not isinstance(speaker_wav, np.ndarray):
@@ -1091,273 +1091,249 @@ class TTSSynthesizer:
         Returns:
             numpy array of audio samples
         """
-        import os  # Import os at the beginning to avoid reference errors
+        import os
         import tempfile
+        import numpy as np
+        import soundfile as sf
         
-        # Default to Alison Dietlinde if no speaker specified
-        if speaker is None:
-            speaker = "Alison Dietlinde"
-            logger.info(f"No speaker specified, defaulting to: {speaker}")
-        else:
-            logger.info(f"Using speaker: {speaker}")
+        # Start with empty result in case of errors
+        result_audio = np.zeros(22050)  # 1 second of silence at 22050 Hz
         
-        logger.info(f"Synthesizing text: '{text[:30]}{'...' if len(text) > 30 else ''}'")
-        model = self.model_manager.get_model()
-        
-        # Check if this is the XTTS-v2 model
-        is_xtts_v2 = "xtts_v2" in self.model_config.model_name
-        
-        # Prepare additional args
-        kwargs = {}
-        temp_files = []  # Track temporary files for cleanup
-        
-        # Set the language parameter (use language_name instead of language to match TTS API)
-        if language:
-            kwargs["language_name"] = language
+        # Track temporary files for cleanup
+        temp_files = []
         
         try:
-            # For XTTS models, try direct inference with speaker embeddings
-            if is_xtts_v2 and hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager:
-                # Try to get speaker embedding
-                speaker_embedding = None
-                
-                # Get the speaker names directly from name_to_id (avoid using speaker_names)
-                available_speakers = list(model.tts_model.speaker_manager.name_to_id)
-                
-                # If speaker doesn't exist in our embeddings, default to Alison Dietlinde
-                if speaker not in available_speakers and "Alison Dietlinde" in available_speakers:
-                    logger.info(f"Speaker '{speaker}' not found, falling back to Alison Dietlinde")
-                    speaker = "Alison Dietlinde"
-                
-                # Get the embedding
-                if speaker in available_speakers:
-                    speaker_embedding = model.tts_model.speaker_manager.get_d_vector_by_name(speaker)
-                
-                # If we have a valid embedding, use direct inference
-                if speaker_embedding is not None:
-                    logger.info(f"Got speaker embedding for '{speaker}', using direct inference")
-                    
-                    # Set language (default to English if not specified)
-                    effective_language = language or "en"
-                    
-                    # Get model settings from config
-                    settings = getattr(model.tts_config, "gpt_inference_config", {})
-                    
-                    try:
-                        # First, we need to get the conditioning latents
-                        if hasattr(model.tts_model, "get_conditioning_latents"):
-                            logger.info("Getting conditioning latents from model")
-                            
-                            # Try to use a reference audio if available
-                            ref_audio_path = None
-                            
-                            # Check if there's a reference audio in the standard location
-                            model_dir = os.path.join(self.model_config.download_root, "tts_models", "multilingual", "multi-dataset", "xtts_v2")
-                            reference_dir = os.path.join(model_dir, "reference_audio")
-                            
-                            if os.path.exists(reference_dir):
-                                for file in os.listdir(reference_dir):
-                                    if file.endswith(".wav") or file.endswith(".mp3"):
-                                        ref_audio_path = os.path.join(reference_dir, file)
-                                        logger.info(f"Using reference audio: {ref_audio_path}")
-                                        break
-                            
-                            # If we have reference_wav data, save it to a temp file to use
-                            if ref_audio_path is None and reference_wav is not None:
-                                logger.info("Using provided reference_wav data")
-                                temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                                temp_path = temp_file.name
-                                temp_file.write(reference_wav)
-                                temp_file.close()
-                                temp_files.append(temp_path)
-                                ref_audio_path = temp_path
-                            
-                            # If we have a reference audio path, use it to get conditioning latents
-                            if ref_audio_path and os.path.exists(ref_audio_path):
-                                try:
-                                    # Get conditioning latents from reference audio
-                                    logger.info(f"Getting conditioning latents from reference audio: {ref_audio_path}")
-                                    
-                                    # Try different parameter names for the reference audio
-                                    try:
-                                        # Try with reference_wav first
-                                        gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(
-                                            reference_wav=ref_audio_path
-                                        )
-                                        logger.info("Used reference_wav parameter successfully")
-                                    except (TypeError, ValueError) as e:
-                                        logger.info(f"reference_wav failed: {e}, trying reference_audio")
-                                        try:
-                                            # Try with reference_audio next
-                                            gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(
-                                                reference_audio=ref_audio_path
-                                            )
-                                            logger.info("Used reference_audio parameter successfully")
-                                        except (TypeError, ValueError) as e:
-                                            logger.info(f"reference_audio failed: {e}, trying without parameter name")
-                                            # As a last resort, try just passing the path as first argument
-                                            gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(
-                                                ref_audio_path
-                                            )
-                                            logger.info("Used positional argument successfully")
-                                    
-                                    logger.info(f"Successfully obtained conditioning latents from reference audio")
-                                except Exception as e:
-                                    logger.error(f"Error getting conditioning latents from reference audio: {e}")
-                                    # We'll continue with just the speaker embedding
-                                    gpt_cond_latent = None
-                            else:
-                                logger.warning("No reference audio available, creating a dummy gpt_cond_latent")
-                                # Create a dummy gpt_cond_latent based on typical dimensions
-                                # XTTS typically uses a 1024-dimensional latent
-                                gpt_cond_latent = torch.zeros((1, 1024))
-                                
-                            # Now call inference with both speaker_embedding and gpt_cond_latent
-                            if gpt_cond_latent is not None:
-                                logger.info(f"Calling inference with speaker_embedding and gpt_cond_latent")
-                                output = model.tts_model.inference(
-                                    text=text,
-                                    language=effective_language,
-                                    speaker_embedding=speaker_embedding,
-                                    gpt_cond_latent=gpt_cond_latent,
-                                    **settings
-                                )
-                                logger.info(f"Direct inference output type: {type(output)}")
-                                
-                                # If the output is a dictionary, extract the audio data
-                                if isinstance(output, dict):
-                                    logger.info(f"Output is a dictionary with keys: {list(output.keys())}")
-                                    # Look for common keys that might contain the audio data
-                                    if 'wav' in output:
-                                        output = output['wav']
-                                        logger.info(f"Extracted 'wav' from output dictionary, new type: {type(output)}")
-                                    elif 'audio' in output:
-                                        output = output['audio']
-                                        logger.info(f"Extracted 'audio' from output dictionary, new type: {type(output)}")
-                                    elif 'waveform' in output:
-                                        output = output['waveform']
-                                        logger.info(f"Extracted 'waveform' from output dictionary, new type: {type(output)}")
-                                    elif len(output) > 0:
-                                        # If we can't find a known key, try the first value
-                                        first_key = next(iter(output))
-                                        first_value = output[first_key]
-                                        if isinstance(first_value, (np.ndarray, torch.Tensor)):
-                                            output = first_value
-                                            logger.info(f"Using first value with key '{first_key}', new type: {type(output)}")
-                                        else:
-                                            logger.warning(f"First value is not an array, type: {type(first_value)}, creating silence")
-                                            output = np.zeros(22050)
-                                    else:
-                                        logger.warning("Output dictionary is empty, using silence")
-                                        output = np.zeros(22050)
-                                
-                                # Convert torch tensor to numpy if needed
-                                if isinstance(output, torch.Tensor):
-                                    output = output.cpu().numpy()
-                                    logger.info(f"Converted torch tensor to numpy array, shape: {output.shape}")
-                                
-                                # Check if we have valid audio data
-                                if isinstance(output, np.ndarray):
-                                    logger.info(f"Direct inference successful, audio shape: {output.shape}")
-                                    return output
-                                else:
-                                    logger.warning(f"Output is not a numpy array, type: {type(output)}, using silence")
-                                    return np.zeros(22050)  # 1 second of silence
-                            else:
-                                logger.warning("Could not create gpt_cond_latent, will try alternate methods")
-                        else:
-                            logger.warning("Model doesn't have get_conditioning_latents method, will try alternate methods")
-                    except Exception as e:
-                        logger.error(f"Direct inference failed: {e}", exc_info=True)
-                        # Will fall back to other methods
+            logger.info(f"[DEBUG] Synthesizing text: '{text[:30]}{'...' if len(text) > 30 else ''}'")
+            logger.info(f"[DEBUG] Initial speaker value: '{speaker}'")
             
-            # If we have a reference WAV file, use that
+            # Get the model
+            model = self.model_manager.get_model()
+            
+            # Get the model directory path
+            model_dir = os.path.join(self.model_config.download_root, "tts_models", "multilingual", "multi-dataset", "xtts_v2")
+            
+            # Prepare reference audio (either from parameter or create a new one)
+            reference_audio_path = None
+            
             if reference_wav is not None:
-                logger.info("Using provided reference wav")
-                
-                # Create a temporary file
+                # Save the provided reference audio to a temporary file
+                logger.info("[DEBUG] Using provided reference_wav data")
                 temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 temp_path = temp_file.name
                 temp_file.write(reference_wav)
                 temp_file.close()
+                reference_audio_path = temp_path
                 temp_files.append(temp_path)
-                
-                # Use the temp file for synthesis
-                kwargs["speaker_wav"] = temp_path
+                logger.info(f"[DEBUG] Saved reference audio to temporary file: {reference_audio_path}")
             else:
-                # Use speaker name for synthesis
-                kwargs["speaker_name"] = speaker
+                # Look for existing reference audio files in the model's directory
+                reference_dir = os.path.join(model_dir, "reference_audio")
+                # Create the directory if it doesn't exist
+                os.makedirs(reference_dir, exist_ok=True)
+                
+                # Check for existing reference files
+                if os.path.exists(reference_dir):
+                    for file in os.listdir(reference_dir):
+                        if file.endswith(".wav") or file.endswith(".mp3"):
+                            reference_audio_path = os.path.join(reference_dir, file)
+                            logger.info(f"[DEBUG] Using existing reference audio file: {reference_audio_path}")
+                            break
             
-            # Call the TTS model
-            logger.info(f"Calling model.tts with kwargs: {kwargs}")
-            wav = model.tts(text=text, **kwargs)
+            # Create a new reference audio file if none was found
+            if reference_audio_path is None:
+                logger.info("[DEBUG] No reference audio found. Creating a default one.")
+                reference_dir = os.path.join(model_dir, "reference_audio")
+                os.makedirs(reference_dir, exist_ok=True)
+                
+                default_ref_path = os.path.join(reference_dir, "default_reference.wav")
+                
+                # Create a 3-second sine wave
+                sr = 24000  # Sample rate
+                duration = 3  # seconds
+                frequency = 440  # Hz
+                t = np.linspace(0, duration, int(sr * duration), False)
+                sine_wave = 0.5 * np.sin(2 * np.pi * frequency * t)
+                
+                # Save the WAV file
+                sf.write(default_ref_path, sine_wave, sr)
+                logger.info(f"[DEBUG] Created default reference audio at {default_ref_path}")
+                reference_audio_path = default_ref_path
             
-            # Process the output from the TTS model
-            logger.info(f"TTS output type: {type(wav)}")
+            # Set the language parameter (use language_name to match the XTTS API)
+            effective_language = language or "en"
             
-            # If the output is a dictionary, extract the audio data
-            if isinstance(wav, dict):
-                logger.info(f"TTS output is a dictionary with keys: {list(wav.keys())}")
-                # Look for common keys that might contain the audio data
-                if 'wav' in wav:
-                    wav = wav['wav']
-                    logger.info(f"Extracted 'wav' from output dictionary, new type: {type(wav)}")
-                elif 'audio' in wav:
-                    wav = wav['audio']
-                    logger.info(f"Extracted 'audio' from output dictionary, new type: {type(wav)}")
-                elif 'waveform' in wav:
-                    wav = wav['waveform']
-                    logger.info(f"Extracted 'waveform' from output dictionary, new type: {type(wav)}")
-                elif len(wav) > 0:
-                    # If we can't find a known key, try the first value
-                    first_key = next(iter(wav))
-                    first_value = wav[first_key]
-                    if isinstance(first_value, (np.ndarray, torch.Tensor)):
-                        wav = first_value
-                        logger.info(f"Using first value with key '{first_key}', new type: {type(wav)}")
-                    else:
-                        logger.warning(f"First value is not an array, type: {type(first_value)}, creating silence")
-                        wav = np.zeros(22050)
+            # Try different approaches to synthesize speech
+            
+            # Approach 1: Try using model.tts directly with the speaker_wav parameter
+            try:
+                logger.info(f"[DEBUG] Attempt 1: Using model.tts with reference_audio_path: {reference_audio_path}")
+                
+                # Prepare kwargs with speaker_wav and language
+                kwargs = {
+                    "speaker_wav": reference_audio_path,
+                    "language_name": effective_language
+                }
+                
+                logger.info(f"[DEBUG] Calling model.tts with kwargs: {kwargs}")
+                result_audio = model.tts(text=text, **kwargs)
+                
+                # Check if we have valid audio data
+                if result_audio is not None and isinstance(result_audio, (np.ndarray, torch.Tensor)) and len(result_audio) > 0:
+                    logger.info(f"[DEBUG] Approach 1 successful, got audio of shape: {result_audio.shape if hasattr(result_audio, 'shape') else 'unknown'}")
+                    
+                    # Convert torch tensor to numpy if needed
+                    if isinstance(result_audio, torch.Tensor):
+                        result_audio = result_audio.cpu().numpy()
+                        
+                    return result_audio
                 else:
-                    logger.warning("Output dictionary is empty, using silence")
-                    wav = np.zeros(22050)
+                    logger.warning(f"[DEBUG] Approach 1 returned invalid audio data: {type(result_audio)}")
+            except Exception as e:
+                logger.error(f"[DEBUG] Approach 1 failed with error: {str(e)}")
             
-            # Convert torch tensor to numpy if needed
-            if isinstance(wav, torch.Tensor):
-                wav = wav.cpu().numpy()
-                logger.info(f"Converted torch tensor to numpy array, shape: {wav.shape}")
+            # Approach 2: Try to access the TTS model's get_conditioning_latents and inference methods directly
+            try:
+                logger.info(f"[DEBUG] Attempt 2: Using direct inference with conditioning latents")
+                
+                if hasattr(model, "tts_model") and hasattr(model.tts_model, "get_conditioning_latents") and hasattr(model.tts_model, "inference"):
+                    # Get conditioning latents from the reference audio
+                    logger.info(f"[DEBUG] Getting conditioning latents from {reference_audio_path}")
+                    
+                    # Try with different parameter names since APIs can vary
+                    gpt_cond_latent = None
+                    speaker_embedding = None
+                    success = False
+                    
+                    try:
+                        logger.info("[DEBUG] Trying get_conditioning_latents with reference_wav parameter")
+                        gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(reference_wav=reference_audio_path)
+                        success = True
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"[DEBUG] Failed with reference_wav parameter: {e}, trying reference_audio")
+                        try:
+                            logger.info("[DEBUG] Trying get_conditioning_latents with reference_audio parameter")
+                            gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(reference_audio=reference_audio_path)
+                            success = True
+                        except (TypeError, ValueError) as e:
+                            logger.warning(f"[DEBUG] Failed with reference_audio parameter: {e}, trying with no parameter name")
+                            # Try with positional argument
+                            try:
+                                logger.info("[DEBUG] Trying get_conditioning_latents with positional parameter")
+                                gpt_cond_latent, speaker_embedding = model.tts_model.get_conditioning_latents(reference_audio_path)
+                                success = True
+                            except Exception as e:
+                                logger.warning(f"[DEBUG] Failed with positional parameter: {e}")
+                    
+                    if not success:
+                        logger.warning("[DEBUG] All attempts to get conditioning latents failed")
+                        raise ValueError("Could not get conditioning latents with any parameter format")
+                    
+                    logger.info(f"[DEBUG] Successfully obtained conditioning latents")
+                    
+                    # Call inference directly with the conditioning latents
+                    logger.info(f"[DEBUG] Calling tts_model.inference directly with conditioning latents")
+                    output = model.tts_model.inference(
+                        text=text,
+                        language=effective_language,
+                        speaker_embedding=speaker_embedding,
+                        gpt_cond_latent=gpt_cond_latent
+                    )
+                    
+                    # Process the output
+                    if isinstance(output, dict):
+                        logger.info(f"[DEBUG] Output is a dictionary with keys: {list(output.keys())}")
+                        # Extract the audio data from the dictionary
+                        if 'wav' in output:
+                            result_audio = output['wav']
+                            logger.info(f"[DEBUG] Found 'wav' in output dictionary")
+                        elif 'audio' in output:
+                            result_audio = output['audio']
+                            logger.info(f"[DEBUG] Found 'audio' in output dictionary")
+                        elif 'waveform' in output:
+                            result_audio = output['waveform']
+                            logger.info(f"[DEBUG] Found 'waveform' in output dictionary")
+                        elif len(output) > 0:
+                            # Try the first value
+                            first_key = next(iter(output))
+                            first_value = output[first_key]
+                            if isinstance(first_value, (np.ndarray, torch.Tensor)):
+                                result_audio = first_value
+                                logger.info(f"[DEBUG] Using first value from output with key: {first_key}")
+                    elif isinstance(output, (np.ndarray, torch.Tensor)):
+                        result_audio = output
+                        logger.info(f"[DEBUG] Output is directly audio data of type: {type(output)}")
+                    
+                    # Convert torch tensor to numpy if needed
+                    if isinstance(result_audio, torch.Tensor):
+                        result_audio = result_audio.cpu().numpy()
+                        logger.info(f"[DEBUG] Converted torch tensor to numpy array")
+                    
+                    # Check if we have valid audio data
+                    if result_audio is not None and isinstance(result_audio, np.ndarray) and len(result_audio) > 0:
+                        logger.info(f"[DEBUG] Approach 2 successful, got audio of shape: {result_audio.shape}")
+                        return result_audio
+                    else:
+                        logger.warning(f"[DEBUG] Approach 2 returned invalid audio data: {type(result_audio)}")
+                else:
+                    logger.warning("[DEBUG] Model doesn't have required methods for approach 2")
+            except Exception as e:
+                logger.error(f"[DEBUG] Approach 2 failed with error: {str(e)}")
             
-            # Clean up temporary files
-            for temp_file in temp_files:
-                try:
-                    os.unlink(temp_file)
-                except Exception as e:
-                    logger.warning(f"Failed to delete temp file {temp_file}: {e}")
+            # Approach 3: Try original tts method with reference_audio parameter
+            try:
+                logger.info(f"[DEBUG] Attempt 3: Using model.tts with 'reference_audio' parameter")
+                result_audio = model.tts(text=text, reference_audio=reference_audio_path, language_name=effective_language)
+                
+                # Convert torch tensor to numpy if needed
+                if isinstance(result_audio, torch.Tensor):
+                    result_audio = result_audio.cpu().numpy()
+                    logger.info(f"[DEBUG] Approach 3: Converted torch tensor to numpy array")
+                
+                # Check if we have valid audio data
+                if result_audio is not None and isinstance(result_audio, np.ndarray) and len(result_audio) > 0:
+                    logger.info(f"[DEBUG] Approach 3 successful, got audio of shape: {result_audio.shape}")
+                    return result_audio
+                else:
+                    logger.warning(f"[DEBUG] Approach 3 returned invalid audio data: {type(result_audio)}")
+            except Exception as e:
+                logger.error(f"[DEBUG] Approach 3 failed with error: {str(e)}")
             
-            # Validate output
-            if wav is None:
-                logger.error("Synthesis returned None")
-                return np.zeros(22050)  # 1 second of silence
-            elif not isinstance(wav, np.ndarray):
-                logger.error(f"Synthesis returned invalid type: {type(wav)}")
-                return np.zeros(22050)  # 1 second of silence
-            elif len(wav) == 0:
-                logger.error("Synthesis returned empty audio")
-                return np.zeros(22050)  # 1 second of silence
+            # Final approach: Try to use tts method with minimal parameters
+            try:
+                logger.info(f"[DEBUG] Final attempt: Using model.tts with minimal parameters")
+                # Try with just text and language
+                result_audio = model.tts(text=text, language_name=effective_language)
+                
+                # Convert torch tensor to numpy if needed
+                if isinstance(result_audio, torch.Tensor):
+                    result_audio = result_audio.cpu().numpy()
+                    logger.info(f"[DEBUG] Final approach: Converted torch tensor to numpy array")
+                
+                # Check if we have valid audio data
+                if result_audio is not None and isinstance(result_audio, np.ndarray) and len(result_audio) > 0:
+                    logger.info(f"[DEBUG] Final approach successful, got audio of shape: {result_audio.shape}")
+                    return result_audio
+                else:
+                    logger.warning(f"[DEBUG] Final approach returned invalid audio data: {type(result_audio)}")
+            except Exception as e:
+                logger.error(f"[DEBUG] Final approach failed with error: {str(e)}")
             
-            logger.info(f"Synthesis successful, audio length: {len(wav)} samples, shape: {wav.shape}")
-            return wav
-        
+            # If all approaches failed, return silence
+            logger.error("[DEBUG] All synthesis approaches failed, returning silence")
+            return result_audio
+            
         except Exception as e:
+            logger.error(f"[DEBUG] Unexpected error in synthesize: {str(e)}")
+            return result_audio
+            
+        finally:
             # Clean up temporary files
             for temp_file in temp_files:
                 try:
                     os.unlink(temp_file)
-                except Exception:
-                    pass
-            
-            logger.error(f"Error during synthesis: {e}", exc_info=True)
-            return np.zeros(22050)  # 1 second of silence
+                    logger.debug(f"[DEBUG] Deleted temporary file: {temp_file}")
+                except Exception as e:
+                    logger.warning(f"[DEBUG] Failed to delete temp file {temp_file}: {e}")
     
     def _convert_audio(self, wav: np.ndarray, format: str, sample_rate: int) -> bytes:
         """Convert audio to the specified format."""
@@ -1542,3 +1518,81 @@ class TTSSynthesizer:
             silence_data = bytearray(data_size)
             
             return bytes(header + silence_data) 
+
+    def get_available_speakers(self) -> List[str]:
+        """Get the list of available speakers for this model."""
+        import os
+        import torch
+        
+        # Default to empty list of speakers
+        speakers = []
+        
+        # Try to get the model to access its path
+        try:
+            model = self.model_manager.get_model()
+            
+            # First check the speaker_manager.speakers dictionary directly
+            # This is the most reliable source and avoids the KeyError issue
+            if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager:
+                if hasattr(model.tts_model.speaker_manager, "speakers"):
+                    speakers_dict = getattr(model.tts_model.speaker_manager, "speakers", {})
+                    if speakers_dict:
+                        # Get speakers from the dictionary keys
+                        speakers = list(speakers_dict.keys())
+                        logger.info(f"Found {len(speakers)} speakers directly from speaker_manager.speakers")
+                        
+                        # Sort the speakers for consistent ordering
+                        speakers.sort()
+                        return speakers
+            
+            # If no speakers from direct dictionary, try the standard approach
+            # Path to the speakers file (look in the same directory as the model)
+            if hasattr(model, "output_path"):
+                model_dir = os.path.dirname(model.output_path)
+                speaker_file_path = os.path.join(model_dir, "speakers_xtts.pth")
+                
+                # Check if the speakers file exists
+                if os.path.exists(speaker_file_path):
+                    try:
+                        # Load the embeddings
+                        logger.info(f"Loading speaker data from {speaker_file_path}")
+                        speaker_data = torch.load(speaker_file_path)
+                        
+                        # Get the list of speakers
+                        speakers = list(speaker_data.keys())
+                        logger.info(f"Found {len(speakers)} speakers in {speaker_file_path}")
+                        
+                        # Sort the speakers for consistent ordering
+                        speakers.sort()
+                    except Exception as e:
+                        logger.error(f"Error loading speakers from {speaker_file_path}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error getting model for speakers: {str(e)}")
+        
+        # If we couldn't get speakers from the model path, try the standard location
+        if not speakers:
+            # Path for XTTS-v2 models
+            model_dir = os.path.join(self.model_config.download_root, "tts_models", "multilingual", "multi-dataset", "xtts_v2")
+            speaker_file_path = os.path.join(model_dir, "speakers_xtts.pth")
+            
+            if os.path.exists(speaker_file_path):
+                try:
+                    # Load the embeddings from the default location
+                    logger.info(f"Loading speaker data from default location: {speaker_file_path}")
+                    speaker_data = torch.load(speaker_file_path)
+                    
+                    # Get the list of speakers
+                    speakers = list(speaker_data.keys())
+                    logger.info(f"Found {len(speakers)} speakers in default location")
+                    
+                    # Sort the speakers for consistent ordering
+                    speakers.sort()
+                except Exception as e:
+                    logger.error(f"Error loading speakers from default location: {str(e)}")
+        
+        # If we still don't have speakers, use the list_available_voices method as fallback
+        if not speakers:
+            logger.info("Using list_available_voices as fallback")
+            speakers = self.model_manager.list_available_voices()
+            
+        return speakers
