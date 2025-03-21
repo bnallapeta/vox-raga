@@ -4,6 +4,7 @@ Main application module for the TTS service.
 import os
 from contextlib import asynccontextmanager
 
+import torch
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,6 +20,31 @@ configure_logging(config.server.log_level)
 
 # Get logger
 logger = get_logger(__name__)
+
+# Apply monkey patch for torch.load to handle weights_only
+original_torch_load = torch.load
+
+def patched_torch_load(f, *args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return original_torch_load(f, *args, **kwargs)
+
+# Apply the monkey patch
+torch.load = patched_torch_load
+logger.info("Applied monkey patch for torch.load to set weights_only=False by default")
+
+# Try to register TTS models with PyTorch safe globals if using PyTorch 2.6+
+try:
+    if hasattr(torch.serialization, 'add_safe_globals'):
+        logger.info("Adding TTS model classes to PyTorch safe globals")
+        try:
+            from TTS.tts.configs.xtts_config import XttsConfig
+            torch.serialization.add_safe_globals([XttsConfig])
+            logger.info("Added XttsConfig to PyTorch safe globals")
+        except ImportError:
+            logger.warning("Could not import XttsConfig")
+except Exception as e:
+    logger.warning(f"Failed to add TTS model classes to PyTorch safe globals: {e}")
 
 # Create necessary directories
 os.makedirs(config.server.cache_dir, exist_ok=True)

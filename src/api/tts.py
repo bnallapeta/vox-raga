@@ -76,9 +76,17 @@ async def websocket_synthesize(websocket: WebSocket):
         )
         
         # Perform synthesis
-        audio_bytes = synthesizer.synthesize(
+        wav = synthesizer.synthesize(
             text=text,
-            options=options,
+            speaker=options.voice,
+            language=options.language
+        )
+        
+        # Convert to bytes in the requested format
+        audio_bytes = synthesizer._convert_audio(
+            wav=wav, 
+            format=options.format, 
+            sample_rate=options.sample_rate
         )
         
         # Send the audio data
@@ -118,10 +126,27 @@ async def synthesize_speech(
         # Start timing
         start_time = time.time()
         
+        # Log the request
+        logger.info(
+            "Synthesis request",
+            text_length=len(request.text),
+            language=request.options.language,
+            voice=request.options.voice,
+            format=request.options.format,
+        )
+        
         # Perform synthesis
-        audio_bytes = synthesizer.synthesize(
+        wav = synthesizer.synthesize(
             text=request.text,
-            options=request.options,
+            speaker=request.options.voice,
+            language=request.options.language
+        )
+        
+        # Convert to bytes in the requested format
+        audio_bytes = synthesizer._convert_audio(
+            wav=wav, 
+            format=request.options.format, 
+            sample_rate=request.options.sample_rate
         )
         
         # Record latency
@@ -134,6 +159,14 @@ async def synthesize_speech(
             "ogg": "audio/ogg"
         }.get(request.options.format, "application/octet-stream")
         
+        # Log completion
+        logger.info(
+            "Synthesis complete",
+            audio_size=len(audio_bytes),
+            format=request.options.format,
+            latency=latency
+        )
+        
         # Return audio stream
         return StreamingResponse(
             io.BytesIO(audio_bytes),
@@ -141,7 +174,8 @@ async def synthesize_speech(
             headers={
                 "X-Processing-Time": str(latency),
                 "X-Language": request.options.language,
-                "X-Voice": request.options.voice
+                "X-Voice": request.options.voice,
+                "Content-Length": str(len(audio_bytes))
             }
         )
     except Exception as e:
@@ -281,9 +315,17 @@ async def process_synthesis_job(job_id: str, text: str, options: SynthesisOption
         synthesis_jobs[job_id]["status"] = "processing"
         
         # Perform synthesis
-        audio_bytes = synthesizer.synthesize(
+        wav = synthesizer.synthesize(
             text=text,
-            options=options,
+            speaker=options.voice,
+            language=options.language
+        )
+        
+        # Convert to bytes
+        audio_bytes = synthesizer._convert_audio(
+            wav=wav, 
+            format=options.format, 
+            sample_rate=options.sample_rate
         )
         
         # Update job with result
@@ -320,9 +362,17 @@ async def batch_synthesize_speech(
             # Process each text
             for i, text in enumerate(request.texts):
                 # Perform synthesis
-                audio_bytes = synthesizer.synthesize(
+                wav = synthesizer.synthesize(
                     text=text,
-                    options=request.options,
+                    speaker=request.options.voice,
+                    language=request.options.language
+                )
+                
+                # Convert to bytes
+                audio_bytes = synthesizer._convert_audio(
+                    wav=wav, 
+                    format=request.options.format, 
+                    sample_rate=request.options.sample_rate
                 )
                 
                 # Add to ZIP file
@@ -459,9 +509,17 @@ async def process_batch_synthesis_job(job_id: str, texts: List[str], options: Sy
             # Process each text
             for i, text in enumerate(texts):
                 # Perform synthesis
-                audio_bytes = synthesizer.synthesize(
+                wav = synthesizer.synthesize(
                     text=text,
-                    options=options,
+                    speaker=options.voice,
+                    language=options.language
+                )
+                
+                # Convert to bytes
+                audio_bytes = synthesizer._convert_audio(
+                    wav=wav, 
+                    format=options.format, 
+                    sample_rate=options.sample_rate
                 )
                 
                 # Add to ZIP file
