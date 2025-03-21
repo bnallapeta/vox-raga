@@ -34,7 +34,7 @@ def custom_load_fsspec(path, map_location=None, cache=True, **kwargs):
 class SimpleSpeakerManager:
     def __init__(self, speakers_file=None):
         # Default speakers as fallback
-        self.name_to_id = {
+        self._name_to_id = {
             "Claribel Dervla": 0,
             "Daisy Studious": 1,
             "Gracie Wise": 2,
@@ -42,7 +42,6 @@ class SimpleSpeakerManager:
             "Alison Dietlinde": 4,
             "Andrew Chipper": 5,
         }
-        self.speaker_names = list(self.name_to_id.keys())
         self.embedding = {}
         
         # Try to load actual embeddings if available
@@ -66,15 +65,16 @@ class SimpleSpeakerManager:
                     self.embedding = speakers_data
                     
                     # Update name_to_id mapping
-                    self.speaker_names = sorted(list(speakers_data.keys()))
-                    self.name_to_id = {name: i for i, name in enumerate(self.speaker_names)}
+                    speaker_names = sorted(list(speakers_data.keys()))
+                    self._name_to_id = {name: i for i, name in enumerate(speaker_names)}
                     
                     # Log the first few speakers for debugging
-                    if len(self.speaker_names) > 0:
-                        logger.info(f"First {min(5, len(self.speaker_names))} speakers: {self.speaker_names[:5]}")
+                    speaker_names = list(self._name_to_id.keys())
+                    if len(speaker_names) > 0:
+                        logger.info(f"First {min(5, len(speaker_names))} speakers: {speaker_names[:5]}")
                         
                         # Verify we can access the first speaker's embedding
-                        first_speaker = self.speaker_names[0]
+                        first_speaker = speaker_names[0]
                         embed = speakers_data.get(first_speaker)
                         if embed is not None:
                             logger.info(f"Found embedding for {first_speaker}")
@@ -91,6 +91,18 @@ class SimpleSpeakerManager:
                     logger.warning(f"Loaded data is not a dictionary: {type(speakers_data)}")
             except Exception as e:
                 logger.error(f"Error loading speaker embeddings: {str(e)}")
+    
+    @property
+    def name_to_id(self):
+        return self._name_to_id
+    
+    @name_to_id.setter
+    def name_to_id(self, value):
+        self._name_to_id = value
+    
+    @property
+    def speaker_names(self):
+        return list(self._name_to_id.keys())
     
     def get_speakers(self):
         """Get a list of available speakers."""
@@ -571,10 +583,10 @@ class TTSModelManager:
                 
                 # Try to get speakers from synthesizer.speaker_manager
                 if hasattr(synthesizer, "speaker_manager") and synthesizer.speaker_manager:
-                    available_speakers = synthesizer.speaker_manager.speaker_names
+                    available_speakers = list(synthesizer.speaker_manager.name_to_id)
                 # Or try tts_model.speaker_manager
                 elif hasattr(synthesizer.tts_model, "speaker_manager") and synthesizer.tts_model.speaker_manager:
-                    available_speakers = synthesizer.tts_model.speaker_manager.speaker_names
+                    available_speakers = list(synthesizer.tts_model.speaker_manager.name_to_id)
                 
                 if available_speakers:
                     fallback_speaker = available_speakers[0]
@@ -703,7 +715,7 @@ class TTSModelManager:
                             if speaker_name not in synthesizer.tts_model.speaker_manager.name_to_id:
                                 next_id = len(synthesizer.tts_model.speaker_manager.name_to_id)
                                 synthesizer.tts_model.speaker_manager.name_to_id[speaker_name] = next_id
-                                synthesizer.tts_model.speaker_manager.speaker_names.append(speaker_name)
+                                # Don't need to append to speaker_names as it's derived from name_to_id
                         except Exception as e:
                             logger.warning(f"Failed to generate embedding for {speaker_name}: {e}")
                 except Exception as e:
@@ -774,7 +786,7 @@ class TTSModelManager:
                         logger.warning("Speaker manager not initialized for XTTS-v2, creating a simple one")
                         # Create and set a simple speaker manager
                         synthesizer.tts_model.speaker_manager = SimpleSpeakerManager(speakers_file=speakers_file)
-                        logger.info(f"Created simple speaker manager with speakers: {synthesizer.tts_model.speaker_manager.speaker_names}")
+                        logger.info(f"Created simple speaker manager with speakers: {list(synthesizer.tts_model.speaker_manager.name_to_id)}")
                     
                     load_time = time.time() - start_time
                     logger.info("TTS model loaded successfully", load_time=load_time)
@@ -818,7 +830,7 @@ class TTSModelManager:
                             logger.warning("Speaker manager not initialized for XTTS-v2, creating a simple one")
                             # Create and set a simple speaker manager
                             synthesizer.tts_model.speaker_manager = SimpleSpeakerManager(speakers_file=speakers_file)
-                            logger.info(f"Created simple speaker manager with speakers: {synthesizer.tts_model.speaker_manager.speaker_names}")
+                            logger.info(f"Created simple speaker manager with speakers: {list(synthesizer.tts_model.speaker_manager.name_to_id)}")
                         
                         load_time = time.time() - start_time
                         logger.info("TTS model loaded successfully with patched torch.load", load_time=load_time)
@@ -920,7 +932,7 @@ class TTSModelManager:
                                 logger.warning("Speaker manager not initialized for XTTS-v2, creating a simple one")
                                 # Create and set a simple speaker manager
                                 synthesizer.tts_model.speaker_manager = SimpleSpeakerManager(speakers_file=speakers_file)
-                                logger.info(f"Created simple speaker manager with speakers: {synthesizer.tts_model.speaker_manager.speaker_names}")
+                                logger.info(f"Created simple speaker manager with speakers: {list(synthesizer.tts_model.speaker_manager.name_to_id)}")
                             
                             load_time = time.time() - start_time
                             logger.info("TTS model loaded successfully with patched torch.load", load_time=load_time)
@@ -994,7 +1006,7 @@ class TTSModelManager:
             
             # Check if model has speakers
             if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager is not None:
-                return model.tts_model.speaker_manager.speaker_names
+                return list(model.tts_model.speaker_manager.name_to_id)
             
             # If we can't get speakers from the model but we know it's the XTTS v2 model,
             # return a list of known XTTS speakers
@@ -1061,7 +1073,7 @@ class TTSSynthesizer:
                     if os.path.isfile(speakers_file):
                         # Create a speaker manager with the speakers file
                         model.tts_model.speaker_manager = SimpleSpeakerManager(speakers_file=speakers_file)
-                        logger.info(f"Speaker manager created with {len(model.tts_model.speaker_manager.speaker_names)} speakers")
+                        logger.info(f"Speaker manager created with {len(model.tts_model.speaker_manager.name_to_id)} speakers")
             except Exception as e:
                 logger.warning(f"Failed to initialize speaker manager: {e}")
                 
@@ -1109,15 +1121,18 @@ class TTSSynthesizer:
                 # Try to get speaker embedding
                 speaker_embedding = None
                 
+                # Get the speaker names directly from name_to_id (avoid using speaker_names)
+                available_speakers = list(model.tts_model.speaker_manager.name_to_id)
+                
                 # If speaker doesn't exist in our embeddings, default to Alison Dietlinde
-                if speaker not in model.tts_model.speaker_manager.speaker_names and "Alison Dietlinde" in model.tts_model.speaker_manager.speaker_names:
+                if speaker not in available_speakers and "Alison Dietlinde" in available_speakers:
                     logger.info(f"Speaker '{speaker}' not found, falling back to Alison Dietlinde")
                     speaker = "Alison Dietlinde"
                 
                 # Get the embedding
-                if speaker in model.tts_model.speaker_manager.speaker_names:
+                if speaker in available_speakers:
                     speaker_embedding = model.tts_model.speaker_manager.get_d_vector_by_name(speaker)
-                    
+                
                 # If we have a valid embedding, use direct inference
                 if speaker_embedding is not None:
                     logger.info(f"Got speaker embedding for '{speaker}', using direct inference")

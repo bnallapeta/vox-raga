@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: vox-raga
-        image: bnracr.azurecr.io/vox-raga:0.0.8
+        image: bnracr.azurecr.io/vox-raga:0.0.18
         imagePullPolicy: Always
         resources:
           limits:
@@ -35,6 +35,8 @@ spec:
           value: "info"
         - name: PYTHONPATH
           value: "/app:/root"
+      imagePullSecrets:
+      - name: acr-secret
 ---
 apiVersion: v1
 kind: Service
