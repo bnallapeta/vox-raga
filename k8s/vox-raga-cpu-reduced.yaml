@@ -39,7 +39,7 @@ spec:
         - name: SERVER_PORT
           value: "8888"
         - name: MODEL_NAME
-          value: "tts_models/en/vctk/vits"
+          value: "tts_models/multilingual/multi-dataset/xtts_v2"
         - name: MODEL_DOWNLOAD_ROOT
           value: "/app/models"
         - name: SERVER_CACHE_DIR

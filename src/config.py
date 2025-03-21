@@ -11,12 +11,12 @@ class TTSModelConfig(BaseModel):
     """Configuration for the TTS model."""
     model_config = ConfigDict(protected_namespaces=())
 
-    model_name: str = Field(default="tts_models/en/vctk/vits", description="TTS model name")
+    model_name: str = Field(default="tts_models/multilingual/multi-dataset/xtts_v2", description="TTS model name")
     device: str = Field(default="cpu", description="Device to use")
     compute_type: str = Field(default="float32", description="Compute type")
     cpu_threads: int = Field(default=4, ge=1, description="Number of CPU threads")
     num_workers: int = Field(default=1, ge=1, description="Number of workers")
-    download_root: str = Field(default="/app/models", description="Root directory for model downloads")
+    download_root: str = Field(default=os.path.join(os.getcwd(), "models"), description="Root directory for model downloads")
     
     @field_validator("model_name")
     @classmethod
@@ -113,7 +113,7 @@ class ServerConfig(BaseModel):
     log_level: str = Field(default="info", description="Log level")
     cors_origins: List[str] = Field(default=["*"], description="CORS origins")
     metrics_enabled: bool = Field(default=True, description="Enable metrics")
-    cache_dir: str = Field(default="/app/cache", description="Cache directory")
+    cache_dir: str = Field(default=os.path.join(os.getcwd(), "cache"), description="Cache directory")
     max_cache_size_mb: int = Field(default=1024, description="Maximum cache size in MB")
 
 
@@ -125,6 +125,13 @@ class AppConfig(BaseModel):
 
 def load_config() -> AppConfig:
     """Load configuration from environment variables."""
+    # Determine if we're in a container environment
+    in_container = os.path.exists("/.dockerenv")
+    
+    # Default paths based on environment
+    default_models_dir = "/app/models" if in_container else os.path.join(os.getcwd(), "models")
+    default_cache_dir = "/app/cache" if in_container else os.path.join(os.getcwd(), "cache")
+    
     # Server config
     server_config = ServerConfig(
         host=os.getenv("SERVER_HOST", "0.0.0.0"),
@@ -132,18 +139,18 @@ def load_config() -> AppConfig:
         log_level=os.getenv("SERVER_LOG_LEVEL", "info"),
         cors_origins=os.getenv("SERVER_CORS_ORIGINS", "*").split(","),
         metrics_enabled=os.getenv("SERVER_METRICS_ENABLED", "true").lower() == "true",
-        cache_dir=os.getenv("SERVER_CACHE_DIR", "/app/cache"),
+        cache_dir=os.getenv("SERVER_CACHE_DIR", default_cache_dir),
         max_cache_size_mb=int(os.getenv("SERVER_MAX_CACHE_SIZE_MB", "1024")),
     )
     
     # Model config
     model_config = TTSModelConfig(
-        model_name=os.getenv("MODEL_NAME", "tts_models/en/vctk/vits"),
+        model_name=os.getenv("MODEL_NAME", "tts_models/multilingual/multi-dataset/xtts_v2"),
         device=os.getenv("MODEL_DEVICE", "cpu"),
         compute_type=os.getenv("MODEL_COMPUTE_TYPE", "float32"),
         cpu_threads=int(os.getenv("MODEL_CPU_THREADS", "4")),
         num_workers=int(os.getenv("MODEL_NUM_WORKERS", "1")),
-        download_root=os.getenv("MODEL_DOWNLOAD_ROOT", "/app/models"),
+        download_root=os.getenv("MODEL_DOWNLOAD_ROOT", default_models_dir),
     )
     
     return AppConfig(server=server_config, model=model_config)

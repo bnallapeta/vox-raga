@@ -7,7 +7,7 @@ import json
 import shutil
 from TTS.utils.manage import ModelManager
 
-def setup_model(model_name="tts_models/en/vctk/vits", output_dir="/tmp/tts_models"):
+def setup_model(model_name="tts_models/multilingual/multi-dataset/xtts_v2", output_dir="/tmp/tts_models"):
     """Download and set up a TTS model for local development."""
     print(f"Setting up model {model_name} in {output_dir}")
     

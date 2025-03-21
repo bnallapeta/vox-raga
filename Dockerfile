@@ -23,7 +23,7 @@ ENV PYTHONPATH=/app \
     SERVER_PORT=8888 \
     MODEL_DOWNLOAD_ROOT=/app/models \
     SERVER_CACHE_DIR=/app/cache \
-    MODEL_NAME=tts_models/en/vctk/vits \
+    MODEL_NAME=tts_models/multilingual/multi-dataset/xtts_v2 \
     SERVER_LOG_LEVEL=info
 
 # Set Python optimization flags for better performance

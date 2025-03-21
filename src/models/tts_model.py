@@ -42,7 +42,17 @@ class TTSModelManager:
         self._initialized = True
         
         # Check model directory at initialization
-        model_dir = os.path.join(self.config.download_root, "tts_models", "en", "vctk", "vits")
+        model_parts = self.config.model_name.split("/")
+        if len(model_parts) >= 4:
+            if model_parts[1] == "multilingual" and model_parts[3] == "xtts_v2":
+                # XTTS-v2 model
+                model_dir = os.path.join(self.config.download_root, *model_parts)
+            else:
+                # Regular model structure
+                model_dir = os.path.join(self.config.download_root, *model_parts)
+        else:
+            model_dir = os.path.join(self.config.download_root, self.config.model_name)
+        
         if os.path.exists(model_dir):
             logger.info(f"Model directory exists at: {model_dir}")
             
@@ -80,7 +90,8 @@ class TTSModelManager:
     def get_model_paths(self, model_name: str) -> List[str]:
         """Get all possible paths where a model might be located."""
         # Standard paths in our configuration
-        paths = [os.path.join(self.config.download_root, *model_name.split("/"))]
+        model_dir = os.path.join(self.config.download_root, *model_name.split("/"))
+        paths = [model_dir]
         
         # Add Coqui's model path format (transforming tts_models/en/vctk/vits to tts_models--en--vctk--vits)
         coqui_model_id = "--".join(model_name.split("/"))
@@ -90,6 +101,7 @@ class TTSModelManager:
             f"/usr/local/lib/python3.8/site-packages/TTS/.models/{coqui_model_id}",
             f"/usr/local/lib/python3.9/site-packages/TTS/.models/{coqui_model_id}",
             f"/usr/local/lib/python3.10/site-packages/TTS/.models/{coqui_model_id}",
+            f"/usr/local/lib/python3.11/site-packages/TTS/.models/{coqui_model_id}",
         ]
         
         paths.extend(coqui_paths)
@@ -132,39 +144,87 @@ class TTSModelManager:
         start_time = time.time()
         model_paths = self.get_model_paths(model_name)
         
-        for path in model_paths:
-            if os.path.exists(path):
-                logger.info(f"Found model at: {path}")
+        # Special handling for XTTS-v2 model
+        is_xtts_v2 = model_name == "tts_models/multilingual/multi-dataset/xtts_v2"
+        
+        for base_path in model_paths:
+            if not os.path.isdir(base_path):
+                logger.warning(f"Path is not a directory: {base_path}")
+                continue
                 
-                # Find model file - check both model_file.pth and model.pth
-                model_file_candidates = ["model_file.pth", "model.pth"]
-                model_path = None
-                for candidate in model_file_candidates:
-                    candidate_path = os.path.join(path, candidate)
-                    if os.path.exists(candidate_path):
-                        model_path = candidate_path
-                        break
+            logger.info(f"Found model directory at: {base_path}")
+            
+            # For XTTS-v2, we use specific file names based on what we know from the model repo
+            if is_xtts_v2:
+                model_file = os.path.join(base_path, "model.pth")
+                config_file = os.path.join(base_path, "config.json")
+                speakers_file = os.path.join(base_path, "speakers_xtts.pth")
+                dvae_file = os.path.join(base_path, "dvae.pth")
+                vocab_file = os.path.join(base_path, "vocab.json")
                 
-                # Find config file - check both config.json and config_file.json
-                config_file_candidates = ["config.json", "config_file.json"]
-                config_path = None
-                for candidate in config_file_candidates:
-                    candidate_path = os.path.join(path, candidate)
-                    if os.path.exists(candidate_path):
-                        config_path = candidate_path
-                        break
+                # Check if all required files exist
+                if not all(os.path.isfile(f) for f in [model_file, config_file, speakers_file, dvae_file, vocab_file]):
+                    logger.warning(f"Missing required files in {base_path}")
+                    continue
                 
-                if model_path and config_path:
-                    logger.info(f"Using model file: {model_path}")
-                    logger.info(f"Using config file: {config_path}")
+                logger.info(f"Found all required files for XTTS-v2 in {base_path}")
+                try:
+                    # TTS v0.22.0 compatible initialization with additional parameters for XTTS-v2
+                    synthesizer = Synthesizer(
+                        tts_checkpoint=base_path,
+                        tts_config_path=config_file,
+                        tts_speakers_file=speakers_file,
+                        tts_languages_file=None,
+                        vocoder_checkpoint=None,
+                        vocoder_config=None,
+                        encoder_checkpoint="",
+                        encoder_config="",
+                        use_cuda=self.config.device == "cuda",
+                    )
                     
-                    # Create synthesizer
+                    load_time = time.time() - start_time
+                    logger.info("TTS model loaded successfully", load_time=load_time)
+                    return synthesizer
+                except Exception as e:
+                    logger.error(f"Failed to load XTTS-v2 model: {e}")
+                    continue
+            else:
+                # For other models, try different file name combinations
+                model_candidates = ["model_file.pth", "model.pth"]
+                config_candidates = ["config.json", "config_file.json"]
+                speakers_candidates = ["speakers_map.json", "speakers.json", "speakers.pth"]
+                
+                model_file = None
+                config_file = None
+                speakers_file = None
+                
+                # Find model file
+                for candidate in model_candidates:
+                    file_path = os.path.join(base_path, candidate)
+                    if os.path.isfile(file_path):
+                        model_file = file_path
+                        break
+                
+                # Find config file
+                for candidate in config_candidates:
+                    file_path = os.path.join(base_path, candidate)
+                    if os.path.isfile(file_path):
+                        config_file = file_path
+                        break
+                
+                # Find speakers file
+                for candidate in speakers_candidates:
+                    file_path = os.path.join(base_path, candidate)
+                    if os.path.isfile(file_path):
+                        speakers_file = file_path
+                        break
+                
+                if model_file and config_file:
                     try:
-                        # TTS v0.22.0 compatible initialization
                         synthesizer = Synthesizer(
-                            tts_checkpoint=model_path,
-                            tts_config_path=config_path,
-                            tts_speakers_file=None,
+                            tts_checkpoint=model_file,
+                            tts_config_path=config_file,
+                            tts_speakers_file=speakers_file,
                             tts_languages_file=None,
                             vocoder_checkpoint=None,
                             vocoder_config=None,
@@ -177,95 +237,12 @@ class TTSModelManager:
                         logger.info("TTS model loaded successfully", load_time=load_time)
                         return synthesizer
                     except Exception as e:
-                        logger.error(f"Failed to load model using direct paths: {e}")
-        
-        # If no path worked, try downloading without using ModelManager
-        try:
-            logger.info(f"Attempting manual download for {model_name}")
-            
-            # Parse model components from name
-            if len(model_name.split('/')) >= 4:
-                _, language, dataset, model_type = model_name.split('/')[:4]
-                
-                # Define model directory
-                model_dir = os.path.join(self.config.download_root, "tts_models", language, dataset, model_type)
-                os.makedirs(model_dir, exist_ok=True)
-                
-                # Define model file URLs - using Hugging Face repo URLs which are more reliable
-                if language == "en" and dataset == "vctk" and model_type == "vits":
-                    # URLs for the vctk/vits model from Hugging Face
-                    model_files = {
-                        "config.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/config.json",
-                        "model.pth": "https://huggingface.co/coqui/VITS-vctk/resolve/main/model.pth",
-                        "speakers_map.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/speakers_map.json",
-                        "language_ids.json": "https://huggingface.co/coqui/VITS-vctk/resolve/main/language_ids.json",
-                    }
-                else:
-                    # Fallback to the old URL pattern for other models (though they might also need to be updated)
-                    model_files = {
-                        "config.json": f"https://coqui.gateway.scarf.sh/models/tts_models/{language}/{dataset}/{model_type}/config.json",
-                        "model.pth": f"https://coqui.gateway.scarf.sh/models/tts_models/{language}/{dataset}/{model_type}/model.pth",
-                    }
-                
-                # Download files if needed
-                files_downloaded = False
-                for filename, url in model_files.items():
-                    target_path = os.path.join(model_dir, filename)
-                    
-                    # Skip if file already exists
-                    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
-                        logger.info(f"Using existing file {target_path}")
+                        logger.error(f"Failed to load model: {e}")
                         continue
-                    
-                    logger.info(f"Downloading {url} to {target_path}")
-                    try:
-                        # Try using the TTS download_file function if available (handles authentication and redirects better)
-                        try:
-                            from TTS.utils.manage import download_file
-                            download_file(url, target_path)
-                            files_downloaded = True
-                            logger.info(f"Downloaded {filename} using TTS download_file")
-                        except ImportError:
-                            # Fall back to urllib if TTS.utils.manage.download_file is not available
-                            import urllib.request
-                            urllib.request.urlretrieve(url, target_path)
-                            files_downloaded = True
-                            logger.info(f"Downloaded {filename} using urllib")
-                    except Exception as e:
-                        logger.warning(f"Failed to download {filename}: {e}")
-                        # Continue with other files, even if one fails
-                
-                # Check if we have the minimum required files
-                if os.path.exists(os.path.join(model_dir, "config.json")) and os.path.exists(os.path.join(model_dir, "model.pth")):
-                    model_path = os.path.join(model_dir, "model.pth")
-                    config_path = os.path.join(model_dir, "config.json")
-                    
-                    logger.info(f"Using model files: Model={model_path}, Config={config_path}")
-                    
-                    # Create synthesizer
-                    synthesizer = Synthesizer(
-                        tts_checkpoint=model_path,
-                        tts_config_path=config_path,
-                        tts_speakers_file=None,
-                        tts_languages_file=None,
-                        vocoder_checkpoint=None,
-                        vocoder_config=None,
-                        encoder_checkpoint="",
-                        encoder_config="",
-                        use_cuda=self.config.device == "cuda",
-                    )
-                    
-                    load_time = time.time() - start_time
-                    message = "Downloaded and loaded" if files_downloaded else "Loaded pre-existing"
-                    logger.info(f"TTS model {message} successfully", load_time=load_time)
-                    return synthesizer
-                else:
-                    raise ValueError(f"Required model files not found after download attempts")
-            else:
-                raise ValueError(f"Invalid model name format: {model_name}")
-        except Exception as e:
-            logger.error(f"Failed to download and load model: {str(e)}")
-            raise ValueError(f"Could not find or load model: {model_name}")
+        
+        # If we get here, we couldn't load the model from any path
+        model_type = "XTTS-v2" if is_xtts_v2 else model_name
+        raise ValueError(f"Could not find or load model: {model_type}. Please ensure model files are correctly placed in the mounted volume.")
     
     def list_available_models(self) -> List[Dict[str, Any]]:
         """List all available TTS models by scanning the filesystem."""
@@ -327,10 +304,23 @@ class TTSModelManager:
             if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager is not None:
                 return model.tts_model.speaker_manager.speaker_names
             
-            return ["default"]
+            # If we can't get speakers from the model but we know it's the XTTS v2 model,
+            # return a list of known XTTS speakers
+            if model_name == "tts_models/multilingual/multi-dataset/xtts_v2" or (not model_name and self.config.model_name == "tts_models/multilingual/multi-dataset/xtts_v2"):
+                # Return list of common XTTS speakers
+                return ["random", "female-en-1", "male-en-1", "female-es-1", "male-es-1", "female-fr-1", "male-fr-1"]
+            
+            # Return a single placeholder for single-speaker models
+            return ["speaker_00"]
         except Exception as e:
             logger.warning(f"Error listing voices: {str(e)}")
-            return ["default"]
+            
+            # If we can't get the model but know it's XTTS v2, return known speakers
+            if model_name == "tts_models/multilingual/multi-dataset/xtts_v2" or (not model_name and self.config.model_name == "tts_models/multilingual/multi-dataset/xtts_v2"):
+                return ["random", "female-en-1", "male-en-1", "female-es-1", "male-es-1", "female-fr-1", "male-fr-1"]
+                
+            # Return a single placeholder
+            return ["speaker_00"]
     
     def list_available_languages(self, model_name: Optional[str] = None) -> List[str]:
         """List all available languages for a model."""
@@ -340,6 +330,10 @@ class TTSModelManager:
             # Check if model has languages
             if hasattr(model.tts_model, "language_manager") and model.tts_model.language_manager is not None:
                 return model.tts_model.language_manager.language_names
+            
+            # XTTS-v2 is multilingual but doesn't always expose language names properly
+            if model_name and "multilingual" in model_name:
+                return ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "ko", "hu"]
             
             # Try to infer from model name
             if model_name and "/" in model_name:
@@ -382,25 +376,22 @@ class TTSSynthesizer:
                 # Get available speakers
                 available_speakers = self.model_manager.list_available_voices()
                 
-                # Check if this is a multi-speaker model
-                if hasattr(model.tts_model, "speaker_manager") and model.tts_model.speaker_manager is not None:
-                    # Use the first available speaker if any
-                    if available_speakers and len(available_speakers) > 0:
-                        speaker = available_speakers[0]
-                        logger.info(
-                            "Using first available speaker for default",
-                            speaker=speaker
-                        )
-                    else:
-                        # If no speakers available, this will likely fail but we'll let the model handle it
-                        logger.warning(
-                            "No speakers available for multi-speaker model",
-                            model=self.model_config.model_name
-                        )
+                # Use the first available speaker if any
+                if available_speakers and len(available_speakers) > 0:
+                    speaker = available_speakers[0]
+                    logger.info(
+                        "Using first available speaker instead of default",
+                        speaker=speaker
+                    )
                 else:
-                    # For single-speaker models, set to None
+                    # Use None for single-speaker models
+                    logger.info("No speakers available, using None for voice parameter")
                     speaker = None
-            
+                
+            # For single-speaker models, set to None if a speaker is specified but not needed
+            if not hasattr(model.tts_model, "speaker_manager") or model.tts_model.speaker_manager is None:
+                speaker = None
+                
             language = options.language
             modified_text = text
             
@@ -510,6 +501,9 @@ class TTSSynthesizer:
                         prompt=style_prompts[options.style]
                     )
             
+            # Special handling for XTTS-v2
+            is_xtts_v2 = self.model_config.model_name == "tts_models/multilingual/multi-dataset/xtts_v2"
+            
             # Synthesize speech
             logger.info(
                 "Synthesizing speech",
@@ -522,14 +516,22 @@ class TTSSynthesizer:
                 energy=speech_energy,
                 emotion=options.emotion,
                 style=options.style,
+                model=self.model_config.model_name,
+                is_xtts=is_xtts_v2
             )
             
             # Check if the model supports additional parameters
             tts_kwargs = {
                 "text": modified_text,
-                "speaker_name": speaker,
-                "language_name": language,
             }
+            
+            # Only add speaker_name if it's not None (XTTS-v2 needs this)
+            if speaker is not None:
+                tts_kwargs["speaker_name"] = speaker
+            
+            # Only add language_name if the model supports it
+            if language is not None and hasattr(model.tts_model, "language_manager"):
+                tts_kwargs["language_name"] = language
             
             # VITS model uses length_scale for speed and pitch_scale for pitch
             if hasattr(model.tts_model, "length_scale"):
@@ -550,6 +552,8 @@ class TTSSynthesizer:
             elif hasattr(model.tts_model, "energy_control"):
                 tts_kwargs["energy"] = speech_energy
                 logger.info("Model supports energy control directly", energy=speech_energy)
+            
+            # For XTTS-v2, which can generate reference speech for voice cloning, we don't need to add it for standard usage
             
             # Pass the modified text and all necessary parameters to the TTS model
             wav = model.tts(**tts_kwargs)

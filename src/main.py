@@ -20,6 +20,24 @@ configure_logging(config.server.log_level)
 # Get logger
 logger = get_logger(__name__)
 
+# Create necessary directories
+os.makedirs(config.server.cache_dir, exist_ok=True)
+os.makedirs(config.model.download_root, exist_ok=True)
+
+# Log paths and environment
+logger.info(f"Cache directory: {os.path.abspath(config.server.cache_dir)}")
+logger.info(f"Models directory: {os.path.abspath(config.model.download_root)}")
+logger.info(f"Running with device: {config.model.device}")
+logger.info(f"Model name: {config.model.model_name}")
+
+# Check if we're in a container
+in_container = os.path.exists("/.dockerenv")
+logger.info(f"Running in container: {in_container}")
+
+# Log environment for debugging
+for env_var in ['MODEL_DOWNLOAD_ROOT', 'SERVER_CACHE_DIR', 'MODEL_NAME', 'MODEL_DEVICE']:
+    if env_var in os.environ:
+        logger.info(f"{env_var} set to: {os.environ[env_var]}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

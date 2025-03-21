@@ -3,86 +3,52 @@ kind: Deployment
 metadata:
   name: vox-raga-gpu
   labels:
-    app: vox-raga-gpu
+    app: vox-raga
+    component: tts
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: vox-raga-gpu
+      app: vox-raga
+      component: tts
   template:
     metadata:
       labels:
-        app: vox-raga-gpu
+        app: vox-raga
+        component: tts
     spec:
-      initContainers:
-      - name: init-permissions
-        image: busybox
-        command: ["sh", "-c", "chown -R 1000:1000 /models && chown -R 1000:1000 /cache"]
-        volumeMounts:
-        - name: models-volume
-          mountPath: /models
-        - name: cache-volume
-          mountPath: /cache
       containers:
       - name: vox-raga
-        image: bnracr.azurecr.io/vox-raga:0.0.6
-        ports:
-        - containerPort: 8888
+        image: bnracr.azurecr.io/vox-raga:0.0.8
+        imagePullPolicy: Always
         resources:
           limits:
             nvidia.com/gpu: 1
-            memory: "2Gi"
-            cpu: "300m"  # Reduced CPU limits
-          requests:
-            memory: "1Gi"  # Reduced memory request
-            cpu: "100m"    # Reduced CPU request
-            nvidia.com/gpu: 1
+        ports:
+        - containerPort: 8888
         env:
-        - name: SERVER_PORT
-          value: "8888"
         - name: MODEL_NAME
-          value: "tts_models/en/vctk/vits"
-        - name: MODEL_DOWNLOAD_ROOT
-          value: "/app/models"
-        - name: SERVER_CACHE_DIR
-          value: "/app/cache"
+          value: "tts_models/multilingual/multi-dataset/xtts_v2"
         - name: MODEL_DEVICE
           value: "cuda"
         - name: SERVER_LOG_LEVEL
           value: "info"
-        volumeMounts:
-        - name: models-volume
-          mountPath: /app/models
-        - name: cache-volume
-          mountPath: /app/cache
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8888
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8888
-          initialDelaySeconds: 30
-          periodSeconds: 10
-      imagePullSecrets:
-      - name: acr-secret
-      volumes:
-      - name: models-volume
-        emptyDir: {}  # Using emptyDir instead of PVC
-      - name: cache-volume
-        emptyDir: {}  # Using emptyDir instead of PVC
+        - name: PYTHONPATH
+          value: "/app:/root"
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: vox-raga-gpu
+  name: vox-raga
+  labels:
+    app: vox-raga
+    component: tts
 spec:
-  selector:
-    app: vox-raga-gpu
+  type: LoadBalancer
   ports:
   - port: 8888
     targetPort: 8888
-  type: ClusterIP 
+    protocol: TCP
+  selector:
+    app: vox-raga
+    component: tts 
