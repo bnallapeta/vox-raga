@@ -1,47 +1,42 @@
 apiVersion: "serving.kserve.io/v1beta1"
 kind: "InferenceService"
 metadata:
-  name: "tts-service"
+  name: "vox-raga"
   namespace: "default"
   annotations:
     sidecar.istio.io/inject: "true"
-    serving.kserve.io/deploymentMode: "RawDeployment"
-    kubernetes.io/change-cause: "Test with root user to verify permission issues"
 spec:
   predictor:
     containers:
-      - name: tts-service
-        image: bnracr.azurecr.io/tts-service:20250318-144134
+      - name: kserve-container
+        image: bnracr.azurecr.io/vox-raga:0.0.20
         imagePullPolicy: Always
         env:
         - name: MODEL_NAME
-          value: "tts_models/en/vctk/vits"
+          value: "tts_models/multilingual/multi-dataset/xtts_v2"
         - name: MODEL_DEVICE
-          value: "cpu"
-        - name: MODEL_COMPUTE_TYPE
-          value: "float32"
+          value: "cuda"
         - name: SERVER_LOG_LEVEL
           value: "info"
-        - name: MODEL_DOWNLOAD_ROOT
-          value: "/models"
+        - name: PYTHONPATH
+          value: "/app:/root"
         - name: HOME
           value: "/root"
-        - name: TTS_HOME
-          value: "/tmp/tts_cache"
         ports:
         - name: http1
-          containerPort: 8000
+          containerPort: 8888
           protocol: TCP
         resources:
           limits:
+            nvidia.com/gpu: 1
             cpu: "1"
-            memory: 2Gi
+            memory: 12Gi
           requests:
-            cpu: "200m"
-            memory: 1Gi
+            cpu: "0.5"
+            memory: 6Gi
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /health
             port: http1
           initialDelaySeconds: 30
           periodSeconds: 10
@@ -57,18 +52,5 @@ spec:
           timeoutSeconds: 5
           successThreshold: 1
           failureThreshold: 3
-        volumeMounts:
-        - name: tts-data
-          mountPath: "/models"
-        - name: tts-cache
-          mountPath: "/tmp/tts_cache"
-        securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-    volumes:
-    - name: tts-data
-      emptyDir: {}
-    - name: tts-cache
-      emptyDir: {}
     imagePullSecrets:
     - name: acr-secret
