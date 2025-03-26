@@ -9,8 +9,8 @@ MODEL_NAME ?= tts_models/en/vctk/vits
 
 # Container runtime configuration
 CONTAINER_RUNTIME ?= $(shell which podman 2>/dev/null || which docker 2>/dev/null)
-REGISTRY ?= bnracr.azurecr.io
-ACR_NAME ?= bnracr
+REGISTRY ?= your-registry.azurecr.io
+ACR_NAME ?= your-acr-name
 
 # Default target
 all: build
