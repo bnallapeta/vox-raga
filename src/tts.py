@@ -1,11 +1,15 @@
 import time
-from log import logger
-from tts.models import SynthesisOptions
+from src.logging_setup import get_logger
+from src.config import SynthesisOptions
+from src.models.tts_model import TTSModelManager
 
-class TextToSpeech:
-    def __init__(self, model_manager, model_config):
-        self.model_manager = model_manager
+# Get logger
+logger = get_logger(__name__)
+
+class TTSSynthesizer:
+    def __init__(self, model_config, model_manager=None):
         self.model_config = model_config
+        self.model_manager = model_manager if model_manager is not None else TTSModelManager(model_config)
 
     def _convert_audio(self, wav, format, sample_rate):
         """Convert audio to the specified format."""

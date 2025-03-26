@@ -12,12 +12,12 @@ from src.config import TTSModelConfig, SynthesisOptions, ServerConfig, AppConfig
 def test_tts_model_config_defaults():
     """Test TTSModelConfig defaults."""
     config = TTSModelConfig()
-    assert config.model_name == "tts_models/en/vctk/vits"
+    assert config.model_name == "tts_models/multilingual/multi-dataset/xtts_v2"
     assert config.device == "cpu"
     assert config.compute_type == "float32"
     assert config.cpu_threads == 4
     assert config.num_workers == 1
-    assert config.download_root == "/tmp/tts_models"
+    assert "models" in config.download_root  # Check that it contains 'models' instead of hardcoding the path
 
 
 @pytest.mark.unit

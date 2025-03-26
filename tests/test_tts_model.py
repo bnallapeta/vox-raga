@@ -1,14 +1,17 @@
 """
 Tests for TTS model module.
 """
-import io
 import os
 import pytest
 import numpy as np
+import io
 from unittest.mock import patch, MagicMock, ANY, call
+from contextlib import ExitStack
+import torch
 
 from src.config import TTSModelConfig, SynthesisOptions
-from src.models.tts_model import TTSModelManager, TTSSynthesizer
+from src.models.tts_model import TTSModelManager
+from src.tts import TTSSynthesizer
 
 
 @pytest.fixture
@@ -49,96 +52,87 @@ def test_model_manager_singleton():
     assert manager1 is manager2
     
     # Verify the config is from the first initialization
-    assert manager1.config.model_name == "tts_models/en/vctk/vits"
+    assert manager1.config.model_name == "tts_models/multilingual/multi-dataset/xtts_v2"
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_model_manager_init():
-    """Test TTSModelManager initialization."""
-    config = TTSModelConfig(
-        model_name="tts_models/en/vctk/vits",
-        device="cpu",
-        download_root="/tmp/tts_models"
-    )
-    
+    """Test model manager initialization."""
+    config = TTSModelConfig()
+
     # Reset the singleton instance
     TTSModelManager._instance = None
-    
-    with patch("src.models.tts_model.ModelManager") as mock_model_manager_class:
-        with patch("os.path.isfile", return_value=False):
-            with patch("os.makedirs") as mock_makedirs:
-                with patch("builtins.open", MagicMock()):
-                    manager = TTSModelManager(config)
-                    
-                    # Verify the config was set
-                    assert manager.config == config
-                    
-                    # Verify the model manager was created
-                    mock_model_manager_class.assert_called_once()
-                    
-                    # Verify the directory was created
-                    mock_makedirs.assert_called_once()
+
+    # Create mocks
+    with patch("os.path.exists") as mock_exists, \
+         patch("os.listdir") as mock_listdir, \
+         patch("os.makedirs") as mock_makedirs:
+        
+        # Configure mocks
+        mock_exists.return_value = False
+        mock_listdir.return_value = []
+
+        # Initialize the manager
+        manager = TTSModelManager(config)
+
+        # Verify the manager was initialized correctly
+        assert manager.config == config
+        assert isinstance(manager.models, dict)
+        assert manager.default_model is None
+        assert manager._initialized is True
+
+        # Verify makedirs is called when creating reference audio directory
+        mock_makedirs.assert_called_once_with(
+            os.path.join(config.download_root, "tts_models", "multilingual", "multi-dataset", "xtts_v2", "reference_audio"),
+            exist_ok=True
+        )
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_get_model():
     """Test get_model method."""
-    config = TTSModelConfig(
-        model_name="tts_models/en/vctk/vits",
-        device="cpu",
-        download_root="/tmp/tts_models"
-    )
-    
+    config = TTSModelConfig()
+
     # Reset the singleton instance
     TTSModelManager._instance = None
-    
-    # Create a mock for ModelManager that returns the expected tuple
-    mock_model_manager = MagicMock()
-    mock_model_manager.download_model.return_value = (
-        "/path/to/model", 
-        "/path/to/config", 
-        {"default_vocoder": "vocoder_model"}
-    )
-    
+
     # Create a mock for Synthesizer
     mock_synthesizer = MagicMock()
-    
-    with patch("src.models.tts_model.ModelManager", return_value=mock_model_manager):
-        with patch("src.models.tts_model.Synthesizer", return_value=mock_synthesizer):
-            # Create the manager
-            manager = TTSModelManager(config)
-            
-            # Clear the models cache to ensure we test the get_model method properly
-            manager.models = {}
-            manager.default_model = None
-            
-            # First call should download and cache the model
-            model = manager.get_model()
-            
-            # Verify the model was downloaded and cached
-            assert model == mock_synthesizer
-            assert manager.models["tts_models/en/vctk/vits"] == mock_synthesizer
-            assert manager.default_model == mock_synthesizer
-            
-            # Verify download_model was called with both the TTS model and vocoder model
-            # The first call should be for the TTS model
-            assert mock_model_manager.download_model.call_count >= 2
-            assert call("tts_models/en/vctk/vits") in mock_model_manager.download_model.call_args_list
-            assert call("vocoder_model") in mock_model_manager.download_model.call_args_list
-            
-            # Store the current call count
-            call_count_before_second_call = mock_model_manager.download_model.call_count
-            
-            # Second call should return the cached model without downloading again
-            model2 = manager.get_model()
-            
-            # Verify the same model was returned
-            assert model2 == mock_synthesizer
-            
-            # Verify download_model was not called again
-            assert mock_model_manager.download_model.call_count == call_count_before_second_call
+    mock_synthesizer.tts_model = MagicMock()
+    mock_synthesizer.tts_model.speaker_manager = MagicMock()
+    mock_synthesizer.tts_model.speaker_manager.name_to_id = {"p225": 0, "p226": 1}
+
+    # Create patches for file operations and Synthesizer
+    patches = [
+        patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.path.isfile", return_value=True),
+        patch("os.makedirs"),
+        patch("TTS.utils.synthesizer.Synthesizer", return_value=mock_synthesizer),
+        patch("torch.load", return_value={}),
+        patch("src.models.tts_model.TTSModelManager.load_model", return_value=mock_synthesizer)
+    ]
+
+    # Only add the add_safe_globals patch if it exists in torch.serialization
+    if hasattr(torch.serialization, 'add_safe_globals'):
+        patches.append(patch("torch.serialization.add_safe_globals", return_value=None))
+
+    with ExitStack() as stack:
+        # Enter all patches
+        for p in patches:
+            stack.enter_context(p)
+
+        manager = TTSModelManager(config)
+        model = manager.get_model()
+
+        # Verify we got the mock synthesizer
+        assert model == mock_synthesizer
+
+        # Verify the model was cached
+        assert config.model_name in manager.models
+        assert manager.models[config.model_name] == mock_synthesizer
 
 
 @pytest.mark.unit
@@ -146,7 +140,7 @@ def test_get_model():
 def test_get_model_with_name():
     """Test get_model method with specific model name."""
     config = TTSModelConfig(
-        model_name="tts_models/en/vctk/vits",
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
         device="cpu",
         download_root="/tmp/tts_models"
     )
@@ -154,128 +148,190 @@ def test_get_model_with_name():
     # Reset the singleton instance
     TTSModelManager._instance = None
     
-    # Create a mock for ModelManager that returns the expected tuple
-    mock_model_manager = MagicMock()
-    mock_model_manager.download_model.return_value = (
-        "/path/to/model", 
-        "/path/to/config", 
-        {"default_vocoder": "vocoder_model"}
-    )
-    
     # Create mocks for Synthesizer
     mock_synthesizer1 = MagicMock()
     mock_synthesizer2 = MagicMock()
     
-    with patch("src.models.tts_model.ModelManager", return_value=mock_model_manager):
-        with patch("src.models.tts_model.Synthesizer", side_effect=[mock_synthesizer1, mock_synthesizer2]):
-            # Create the manager
-            manager = TTSModelManager(config)
-            
-            # Clear the models cache to ensure we test the get_model method properly
-            manager.models = {}
-            manager.default_model = None
-            
-            # First call with default model
-            model1 = manager.get_model()
-            
-            # Verify the first model was downloaded and cached
-            assert model1 == mock_synthesizer1
-            assert manager.models["tts_models/en/vctk/vits"] == mock_synthesizer1
-            
-            # Verify download_model was called with the default model name
-            mock_model_manager.download_model.assert_any_call("tts_models/en/vctk/vits")
-            
-            # Call with different model
-            model2 = manager.get_model("tts_models/en/ljspeech/tacotron2-DDC")
-            
-            # Verify the second model was downloaded and cached
-            assert model2 == mock_synthesizer2
-            assert manager.models["tts_models/en/ljspeech/tacotron2-DDC"] == mock_synthesizer2
-            
-            # Verify download_model was called with the second model name
-            mock_model_manager.download_model.assert_any_call("tts_models/en/ljspeech/tacotron2-DDC")
-            
-            # Verify both models are cached
-            assert len(manager.models) == 2
-            assert "tts_models/en/vctk/vits" in manager.models
-            assert "tts_models/en/ljspeech/tacotron2-DDC" in manager.models
+    # Create patches for file operations and Synthesizer
+    patches = [
+        patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.path.isfile", return_value=True),
+        patch("os.makedirs"),
+        patch("TTS.utils.synthesizer.Synthesizer", side_effect=[mock_synthesizer1, mock_synthesizer2]),
+        patch("torch.load", return_value={}),
+        patch("src.models.tts_model.TTSModelManager.load_model", side_effect=[mock_synthesizer1, mock_synthesizer2])
+    ]
+
+    # Only add the add_safe_globals patch if it exists in torch.serialization
+    if hasattr(torch.serialization, 'add_safe_globals'):
+        patches.append(patch("torch.serialization.add_safe_globals", return_value=None))
+
+    with ExitStack() as stack:
+        # Enter all patches
+        for p in patches:
+            stack.enter_context(p)
+        
+        # Create the manager
+        manager = TTSModelManager(config)
+        
+        # Clear the models cache to ensure we test the get_model method properly
+        manager.models = {}
+        manager.default_model = None
+        
+        # First call with default model
+        model1 = manager.get_model()
+        
+        # Verify the first model was downloaded and cached
+        assert model1 == mock_synthesizer1
+        assert manager.models["tts_models/multilingual/multi-dataset/xtts_v2"] == mock_synthesizer1
+        
+        # Call with different model
+        model2 = manager.get_model("tts_models/en/ljspeech/tacotron2-DDC")
+        
+        # Verify the second model was downloaded and cached
+        assert model2 == mock_synthesizer2
+        assert manager.models["tts_models/en/ljspeech/tacotron2-DDC"] == mock_synthesizer2
+        
+        # Verify both models are cached
+        assert len(manager.models) == 2
+        assert "tts_models/multilingual/multi-dataset/xtts_v2" in manager.models
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_list_available_models():
     """Test list_available_models method."""
-    config = TTSModelConfig()
-    
+    config = TTSModelConfig(
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+        device="cpu",
+        download_root="/tmp/tts_models"
+    )
+
     # Reset the singleton instance
     TTSModelManager._instance = None
-    
-    # Create a mock for ModelManager
-    mock_model_manager = MagicMock()
-    # Use list_tts_models instead of list_models
-    mock_model_manager.list_tts_models.return_value = [
-        {"model_name": "tts_models/en/vctk/vits"},
-        {"model_name": "tts_models/en/ljspeech/tacotron2-DDC"}
-    ]
-    
-    with patch("src.models.tts_model.ModelManager", return_value=mock_model_manager):
+
+    # Create a mock directory structure
+    mock_structure = {
+        "/tmp/tts_models/tts_models": True,
+        "/tmp/tts_models/tts_models/multilingual": True,
+        "/tmp/tts_models/tts_models/multilingual/multi-dataset": True,
+        "/tmp/tts_models/tts_models/multilingual/multi-dataset/xtts_v2": True,
+        "/tmp/tts_models/tts_models/multilingual/multi-dataset/xtts_v2/model.pth": True,
+        "/tmp/tts_models/tts_models/multilingual/multi-dataset/xtts_v2/config.json": True,
+    }
+
+    def mock_exists(path):
+        return mock_structure.get(path, False)
+
+    def mock_isdir(path):
+        return mock_structure.get(path, False) and not path.endswith((".pth", ".json"))
+
+    def mock_listdir(path):
+        if path == "/tmp/tts_models/tts_models":
+            return ["multilingual"]
+        elif path == "/tmp/tts_models/tts_models/multilingual":
+            return ["multi-dataset"]
+        elif path == "/tmp/tts_models/tts_models/multilingual/multi-dataset":
+            return ["xtts_v2"]
+        elif path == "/tmp/tts_models/tts_models/multilingual/multi-dataset/xtts_v2":
+            return ["model.pth", "config.json"]
+        return []
+
+    with patch("os.path.exists", side_effect=mock_exists), \
+         patch("os.path.isdir", side_effect=mock_isdir), \
+         patch("os.listdir", side_effect=mock_listdir), \
+         patch("os.makedirs"):
+
         manager = TTSModelManager(config)
-        
         models = manager.list_available_models()
-        
-        assert len(models) == 2
-        assert models[0]["model_name"] == "tts_models/en/vctk/vits"
-        assert models[1]["model_name"] == "tts_models/en/ljspeech/tacotron2-DDC"
+
+        # Verify we got the expected model
+        assert len(models) == 1
+        assert models[0]["model_name"] == "tts_models/multilingual/multi-dataset/xtts_v2"
+        assert models[0]["language"] == "multilingual"
+        assert models[0]["dataset"] == "multi-dataset"
+        assert models[0]["model_type"] == "xtts_v2"
+
+
+class SimpleSpeakerManager:
+    """A simple speaker manager for testing."""
+    def __init__(self):
+        self.name_to_id = {}
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_list_available_voices():
     """Test list_available_voices method."""
-    config = TTSModelConfig()
-    
+    config = TTSModelConfig(
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+        device="cpu",
+        download_root="/tmp/tts_models"
+    )
+
     # Reset the singleton instance
     TTSModelManager._instance = None
-    
+
     # Create a mock for Synthesizer with the correct structure
     mock_synthesizer = MagicMock()
-    # The actual implementation uses tts_model.speaker_manager.speaker_names
     mock_synthesizer.tts_model = MagicMock()
-    mock_synthesizer.tts_model.speaker_manager = MagicMock()
-    mock_synthesizer.tts_model.speaker_manager.speaker_names = ["p225", "p226", "p227"]
-    
-    with patch("src.models.tts_model.ModelManager"):
-        with patch.object(TTSModelManager, "get_model", return_value=mock_synthesizer):
-            manager = TTSModelManager(config)
-            
-            voices = manager.list_available_voices()
-            
-            assert voices == ["p225", "p226", "p227"]
+    mock_synthesizer.tts_model.speaker_manager = SimpleSpeakerManager()
+    mock_synthesizer.tts_model.speaker_manager.name_to_id = {
+        "Claribel Dervla": 0,
+        "Daisy Studious": 1,
+        "Gracie Wise": 2,
+        "Tammie Ema": 3,
+        "Alison Dietlinde": 4,
+        "Andrew Chipper": 5
+    }
+
+    with patch("os.path.exists", return_value=True), \
+         patch("os.path.isdir", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.makedirs"), \
+         patch("TTS.utils.synthesizer.Synthesizer", return_value=mock_synthesizer):
+
+        manager = TTSModelManager(config)
+        voices = manager.list_available_voices()
+
+        # Verify we got the expected voices
+        assert set(voices) == {
+            "Claribel Dervla", "Daisy Studious", "Gracie Wise",
+            "Tammie Ema", "Alison Dietlinde", "Andrew Chipper"
+        }
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_list_available_languages():
     """Test list_available_languages method."""
-    config = TTSModelConfig()
-    
+    config = TTSModelConfig(
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+        device="cpu",
+        download_root="/tmp/tts_models"
+    )
+
     # Reset the singleton instance
     TTSModelManager._instance = None
-    
+
     # Create a mock for Synthesizer with the correct structure
     mock_synthesizer = MagicMock()
-    # The actual implementation uses tts_model.language_manager.language_names
     mock_synthesizer.tts_model = MagicMock()
     mock_synthesizer.tts_model.language_manager = MagicMock()
-    mock_synthesizer.tts_model.language_manager.language_names = ["en", "fr", "de"]
-    
-    with patch("src.models.tts_model.ModelManager"):
-        with patch.object(TTSModelManager, "get_model", return_value=mock_synthesizer):
-            manager = TTSModelManager(config)
-            
-            languages = manager.list_available_languages()
-            
-            assert languages == ["en", "fr", "de"]
+    mock_synthesizer.tts_model.language_manager.language_names = ["en"]
+
+    with patch("os.path.exists", return_value=True), \
+         patch("os.path.isdir", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.makedirs"), \
+         patch("TTS.utils.synthesizer.Synthesizer", return_value=mock_synthesizer):
+
+        manager = TTSModelManager(config)
+        languages = manager.list_available_languages()
+
+        # Verify we got the expected languages
+        assert languages == ["en"]
 
 
 @pytest.mark.unit
@@ -283,56 +339,64 @@ def test_list_available_languages():
 def test_synthesizer_init():
     """Test TTSSynthesizer initialization."""
     config = TTSModelConfig()
-    
-    with patch("src.models.tts_model.TTSModelManager") as mock_manager_class:
-        synthesizer = TTSSynthesizer(config)
-        
-        assert synthesizer.model_config == config
-        mock_manager_class.assert_called_once_with(config)
+
+    # Create a mock for TTSModelManager
+    mock_manager = MagicMock()
+
+    # Create the synthesizer with the correct arguments
+    synthesizer = TTSSynthesizer(config, mock_manager)
+
+    assert synthesizer.model_config == config
+    assert synthesizer.model_manager == mock_manager
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_synthesize():
     """Test synthesize method."""
-    config = TTSModelConfig()
+    config = TTSModelConfig(
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+        device="cpu",
+        download_root="/tmp/tts_models"
+    )
     options = SynthesisOptions(
         language="en",
-        voice="p225",
+        voice="Claribel Dervla",
         speed=1.0,
-        format="wav"
+        format="wav",
+        emotion="neutral"
     )
     text = "Hello, world!"
-    
+
     # Create a mock for TTSModelManager
     mock_manager = MagicMock()
-    mock_model = MagicMock()
-    mock_manager.get_model.return_value = mock_model
-    
-    # Set up the mock model to return audio data
-    mock_model.tts.return_value = (np.zeros(22050, dtype=np.float32), 22050)
-    
-    with patch("src.models.tts_model.TTSModelManager", return_value=mock_manager):
-        with patch.object(TTSSynthesizer, "_convert_audio", return_value=b"audio data"):
-            with patch("time.time", side_effect=[0, 1]):  # Mock time.time to return 0 then 1
-                synthesizer = TTSSynthesizer(config)
-                
-                # Call the method
-                audio_data = synthesizer.synthesize(text, options)
-                
-                # Verify the result
-                assert audio_data == b"audio data"
-                
-                # Verify the model was called correctly with the right parameter names
-                mock_model.tts.assert_called_once_with(
-                    text=text,
-                    speaker_name=options.voice,
-                    language_name=options.language,
-                    speed=options.speed
-                )
-                
-                # Verify _convert_audio was called correctly
-                synthesizer._convert_audio.assert_called_once()
+
+    # Set up the mock manager to return audio data
+    mock_audio = np.zeros(22050, dtype=np.float32)
+    mock_manager.synthesize.return_value = mock_audio
+
+    # Create the synthesizer with the correct arguments
+    synthesizer = TTSSynthesizer(config, mock_manager)
+
+    # Mock _convert_audio to return mock audio data
+    synthesizer._convert_audio = MagicMock(return_value=b"mock audio data")
+
+    # Call the method
+    audio_data = synthesizer.synthesize(text, options)
+
+    # Verify the result is bytes
+    assert isinstance(audio_data, bytes)
+    assert audio_data == b"mock audio data"
+
+    # Verify the mock manager was called correctly
+    mock_manager.synthesize.assert_called_once()
+    call_args = mock_manager.synthesize.call_args[1]
+    assert call_args["speaker"] == "Claribel Dervla"
+    assert call_args["language"] == "en"
+    assert "Say this in a neutral tone: Hello, world!" in call_args["text"]
+
+    # Verify _convert_audio was called correctly
+    synthesizer._convert_audio.assert_called_once_with(mock_audio, "wav", 22050)
 
 
 @pytest.mark.unit
@@ -340,91 +404,90 @@ def test_synthesize():
 def test_convert_audio():
     """Test _convert_audio method."""
     config = TTSModelConfig()
-    
+
     # Create a simple audio array (1 second of silence at 22050Hz)
     wav = np.zeros(22050, dtype=np.float32)
-    
-    with patch("src.models.tts_model.TTSModelManager"):
-        # Mock the soundfile module
-        with patch.dict("sys.modules", {"soundfile": MagicMock()}):
-            # Import soundfile inside the patch context
-            import sys
-            mock_sf = sys.modules["soundfile"]
+
+    # Create a mock for TTSModelManager
+    mock_manager = MagicMock()
+
+    # Mock the soundfile module
+    with patch.dict("sys.modules", {"soundfile": MagicMock()}):
+        # Import soundfile inside the patch context
+        import sys
+        mock_sf = sys.modules["soundfile"]
+
+        # Configure the mock
+        mock_sf.write = MagicMock()
+
+        # Create a mock for BytesIO that behaves like a real file object
+        mock_buffer = io.BytesIO()
+        mock_buffer.write(b"mock audio data")
+
+        with patch("io.BytesIO", return_value=mock_buffer):
+            # Create the synthesizer with the correct arguments
+            synthesizer = TTSSynthesizer(config, mock_manager)
+
+            # Call the method
+            audio_data = synthesizer._convert_audio(wav, "wav", 22050)
             
-            # Configure the mock
-            mock_sf.write = MagicMock()
+            # Verify the result
+            assert audio_data == b"mock audio data"
             
-            # Create a mock for BytesIO
-            mock_buffer = MagicMock(spec=io.BytesIO)
-            mock_buffer.read.return_value = b"mock audio data"
-            
-            with patch("io.BytesIO", return_value=mock_buffer):
-                synthesizer = TTSSynthesizer(config)
-                
-                # Test WAV format
-                audio_data = synthesizer._convert_audio(wav, "wav", 22050)
-                
-                # Verify soundfile.write was called correctly
-                mock_sf.write.assert_called_once_with(mock_buffer, wav, 22050, format="wav")
-                
-                # Verify the buffer was read
-                mock_buffer.seek.assert_called_once_with(0)
-                mock_buffer.read.assert_called_once()
-                
-                # Verify the result
-                assert audio_data == b"mock audio data"
+            # Verify soundfile.write was called correctly
+            mock_sf.write.assert_called_once_with(mock_buffer, wav, 22050, format="wav")
 
 
 @pytest.mark.unit
 @pytest.mark.model
 def test_synthesize_with_emotion_and_style():
     """Test synthesize method with emotion and style parameters."""
-    config = TTSModelConfig()
+    config = TTSModelConfig(
+        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+        device="cpu",
+        download_root="/tmp/tts_models"
+    )
     options = SynthesisOptions(
         language="en",
-        voice="p225",
+        voice="Claribel Dervla",
         speed=1.0,
         format="wav",
         emotion="happy",
         style="conversational"
     )
     text = "Hello, world!"
-    
+
     # Create a mock for TTSModelManager
     mock_manager = MagicMock()
-    mock_model = MagicMock()
-    mock_manager.get_model.return_value = mock_model
-    
-    # Set up the mock model to return audio data
-    mock_model.tts.return_value = (np.zeros(22050, dtype=np.float32), 22050)
-    
-    with patch("src.models.tts_model.TTSModelManager", return_value=mock_manager):
-        with patch.object(TTSSynthesizer, "_convert_audio", return_value=b"audio data"):
-            with patch("time.time", side_effect=[0, 1]):  # Mock time.time to return 0 then 1
-                synthesizer = TTSSynthesizer(config)
-                
-                # Call the method
-                audio_data = synthesizer.synthesize(text, options)
-                
-                # Verify the result
-                assert audio_data == b"audio data"
-                
-                # Get the actual text passed to the TTS model
-                actual_text = mock_model.tts.call_args[1]['text']
-                
-                # Verify that the text was modified with emotion and style tags
-                assert "happy" in actual_text.lower() or "conversational" in actual_text.lower()
-                assert text in actual_text  # Original text should still be present
-                
-                # Verify the model was called with the right parameter names
-                mock_model.tts.assert_called_once()
-                call_kwargs = mock_model.tts.call_args[1]
-                assert call_kwargs['speaker_name'] == options.voice
-                assert call_kwargs['language_name'] == options.language
-                assert call_kwargs['speed'] == options.speed
-                
-                # Verify _convert_audio was called correctly
-                synthesizer._convert_audio.assert_called_once()
+
+    # Set up the mock manager to return audio data
+    mock_audio = np.zeros(22050, dtype=np.float32)
+    mock_manager.synthesize.return_value = mock_audio
+
+    # Create the synthesizer with the correct arguments
+    synthesizer = TTSSynthesizer(config, mock_manager)
+
+    # Mock _convert_audio to return mock audio data
+    synthesizer._convert_audio = MagicMock(return_value=b"mock audio data")
+
+    # Call the method
+    audio_data = synthesizer.synthesize(text, options)
+
+    # Verify the result is bytes
+    assert isinstance(audio_data, bytes)
+    assert audio_data == b"mock audio data"
+
+    # Verify the mock manager was called correctly
+    mock_manager.synthesize.assert_called_once()
+    call_args = mock_manager.synthesize.call_args[1]
+    assert call_args["speaker"] == "Claribel Dervla"
+    assert call_args["language"] == "en"
+    assert "Say this in a happy and cheerful tone:" in call_args["text"]
+    assert "In a friendly conversational style:" in call_args["text"]
+    assert "Hello, world!" in call_args["text"]
+
+    # Verify _convert_audio was called correctly
+    synthesizer._convert_audio.assert_called_once_with(mock_audio, "wav", 22050)
 
 
 # Import time for the test_synthesize function

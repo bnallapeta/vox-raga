@@ -23,7 +23,8 @@ def client():
 def mock_synthesizer():
     """Mock synthesizer fixture."""
     mock = MagicMock()
-    mock.synthesize.return_value = b"mock audio data"
+    mock.synthesize.return_value = b"mock wav data"
+    mock._convert_audio.return_value = b"mock audio data"
     return mock
 
 
@@ -142,16 +143,16 @@ def test_synthesize_endpoint_with_custom_parameters(client, mock_synthesizer):
         assert response.content == b"mock audio data"
         
         # Verify the synthesizer was called with the right parameters
-        options = mock_synthesizer.synthesize.call_args[1]["options"]
-        assert options.language == "en"
-        assert options.voice == "p225"
-        assert options.speed == 1.2
-        assert options.pitch == 0.9
-        assert options.energy == 1.1
-        assert options.emotion == "happy"
-        assert options.style == "formal"
-        assert options.format == "wav"
-        assert options.sample_rate == 44100
+        call_args = mock_synthesizer.synthesize.call_args[1]
+        assert call_args["text"] == "Hello, world!"
+        assert call_args["speaker"] == "p225"
+        assert call_args["language"] == "en"
+        
+        # Verify the audio conversion was called with the right parameters
+        convert_args = mock_synthesizer._convert_audio.call_args[1]
+        assert convert_args["wav"] == b"mock wav data"
+        assert convert_args["format"] == "wav"
+        assert convert_args["sample_rate"] == 44100
 
 
 @pytest.mark.unit

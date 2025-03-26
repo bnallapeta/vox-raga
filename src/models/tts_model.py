@@ -205,6 +205,11 @@ class TTSModelManager:
         self.default_model = None
         self._initialized = True
         
+        # Create reference audio directory
+        model_dir = os.path.join(self.config.download_root, "tts_models", "multilingual", "multi-dataset", "xtts_v2")
+        reference_dir = os.path.join(model_dir, "reference_audio")
+        os.makedirs(reference_dir, exist_ok=True)
+        
         # Check model directory at initialization
         model_parts = self.config.model_name.split("/")
         if len(model_parts) >= 4:

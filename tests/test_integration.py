@@ -48,11 +48,18 @@ def mock_tts_api():
     synthesizer_mock = MagicMock()
     
     # Mock the synthesize method
-    def mock_synthesize(text, options):
-        # Return different mock data based on format
-        return f"mock {options.format} data".encode()
+    def mock_synthesize(text, speaker, language):
+        # Return a numpy array as mock audio data
+        return np.zeros(1000, dtype=np.float32)
     
     synthesizer_mock.synthesize.side_effect = mock_synthesize
+    
+    # Mock the _convert_audio method
+    def mock_convert_audio(wav, format, sample_rate):
+        # Return different mock data based on format
+        return f"mock {format} data".encode()
+    
+    synthesizer_mock._convert_audio.side_effect = mock_convert_audio
     
     # Create mock model manager
     model_manager_mock = MagicMock()
@@ -129,7 +136,8 @@ def test_synthesize_endpoint_integration(client, mock_tts_api):
     # Verify the synthesizer was called with correct parameters
     mock_tts_api["synthesizer"].synthesize.assert_called_with(
         text="Hello, this is an integration test.",
-        options=OptionsMatcher(request_data["options"])
+        speaker=request_data["options"]["voice"],
+        language=request_data["options"]["language"]
     )
 
 
@@ -185,7 +193,8 @@ def test_synthesize_endpoint_with_different_voices(client, mock_tts_api):
     # Verify the synthesizer was called with correct parameters
     mock_tts_api["synthesizer"].synthesize.assert_called_with(
         text="Hello, this is an integration test.",
-        options=OptionsMatcher(request_data["options"])
+        speaker=request_data["options"]["voice"],
+        language=request_data["options"]["language"]
     )
 
 
@@ -211,7 +220,8 @@ def test_synthesize_endpoint_with_different_languages(client, mock_tts_api):
     # Verify the synthesizer was called with correct parameters
     mock_tts_api["synthesizer"].synthesize.assert_called_with(
         text="Bonjour, ceci est un test d'intégration.",
-        options=OptionsMatcher(request_data["options"])
+        speaker=request_data["options"]["voice"],
+        language=request_data["options"]["language"]
     )
 
 
@@ -236,7 +246,8 @@ def test_synthesize_endpoint_with_different_speeds(client, mock_tts_api):
     # Verify the synthesizer was called with correct parameters
     mock_tts_api["synthesizer"].synthesize.assert_called_with(
         text="Hello, this is an integration test.",
-        options=OptionsMatcher(request_data["options"])
+        speaker=request_data["options"]["voice"],
+        language=request_data["options"]["language"]
     )
 
 
