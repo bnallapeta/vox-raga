@@ -1,642 +1,154 @@
 # VoxRaga
 
-A high-quality, scalable Text-to-Speech (TTS) service built with FastAPI and Coqui TTS.
+A high-performance Text-to-Speech (TTS) service built with FastAPI and Coqui TTS.
 
-## Project Overview
+## Overview
 
-VoxRaga is a modular, scalable, and high-performance Text-to-Speech service that can operate in both cloud and edge environments. It is part of a larger speech-to-speech translation pipeline that includes:
+VoxRaga delivers natural-sounding speech synthesis with support for multiple languages and voices. Built for running locally and on Kubernetes clusters, it offers a RESTful API that integrates seamlessly with existing speech processing pipelines.
 
-1. **Speech-to-Text (ASR)** - Kube-Whisperer
-2. **Text Translation** - Translation Service
-3. **Text-to-Speech (TTS)** - VoxRaga (this service)
+## Features
 
-## Key Features
+- High-quality speech synthesis using state-of-the-art neural models
+- Multi-language and multi-voice support
+- Adjustable speech parameters (speed, pitch, format)
+- REST API with JSON interface
+- GPU-accelerated inference
+- Kubernetes-ready containerization
+- Prometheus metrics and health monitoring
 
-- High-quality, natural-sounding speech synthesis
-- Support for 40+ languages
-- Multiple voice options per language
-- Adjustable speech parameters (speed, pitch, etc.)
-- Emotion and style control
-- REST and WebSocket APIs
-- Kubernetes-native deployment
-- Scalable architecture
-- Comprehensive monitoring and observability
-
-## Technical Architecture
-
-- FastAPI for the API layer
-- Coqui TTS for speech synthesis
-- Docker containers for packaging
-- Kubernetes-native deployment
-- Prometheus for metrics
-- Structured logging
-- GPU acceleration with CPU fallback
-- Multi-architecture support (AMD64/ARM64)
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- Docker (for containerized deployment)
-- Kubernetes (for cloud deployment)
-- espeak or espeak-ng (required for phonemization)
+- Kubernetes cluster with GPU nodes (for cloud deployment)
+- Docker or Podman
+- espeak or espeak-ng (for phonemization)
 
-### Local Development
-
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/yourusername/vox-raga.git
-   cd vox-raga
-   ```
-
-2. **Install espeak (required for TTS)**
-   ```bash
-   # On macOS
-   brew install espeak
-   
-   # On Ubuntu/Debian
-   sudo apt-get install espeak
-   
-   # On CentOS/RHEL
-   sudo yum install espeak
-   ```
-
-3. **Set Up Development Environment**
-   ```bash
-   make setup-local
-   ```
-
-4. **Run Locally**
-   ```bash
-   make run-local
-   ```
-
-## Configuration Options
-
-VoxRaga provides extensive configuration options to customize the TTS service behavior. Configuration can be set through environment variables or directly in the code.
-
-### Environment Variables
-
-#### Server Configuration
-
-| Variable | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `SERVER_HOST` | Host to bind to | `0.0.0.0` | `127.0.0.1` |
-| `SERVER_PORT` | Port to bind to | `8000` | `9000` |
-| `SERVER_LOG_LEVEL` | Logging level | `info` | `debug` |
-| `SERVER_CORS_ORIGINS` | CORS origins (comma-separated) | `*` | `http://localhost:3000,https://example.com` |
-| `SERVER_METRICS_ENABLED` | Enable Prometheus metrics | `true` | `false` |
-| `SERVER_CACHE_DIR` | Cache directory | `/tmp/tts_cache` | `/data/cache` |
-| `SERVER_MAX_CACHE_SIZE_MB` | Maximum cache size in MB | `1024` | `2048` |
-
-#### Model Configuration
-
-| Variable | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `MODEL_NAME` | TTS model name | `tts_models/en/vctk/vits` | `tts_models/en/ljspeech/tacotron2-DDC` |
-| `MODEL_DEVICE` | Device to use | `cpu` | `cuda` |
-| `MODEL_COMPUTE_TYPE` | Compute type | `float32` | `float16` |
-| `MODEL_CPU_THREADS` | Number of CPU threads | `4` | `8` |
-| `MODEL_NUM_WORKERS` | Number of workers | `1` | `2` |
-| `MODEL_DOWNLOAD_ROOT` | Root directory for model downloads | `/tmp/tts_models` | `/data/models` |
-
-### Available Models
-
-VoxRaga uses Coqui TTS models. The default model is `tts_models/en/vctk/vits`, which provides high-quality multi-speaker English synthesis. Other available models include:
-
-- `tts_models/en/ljspeech/tacotron2-DDC` - Single-speaker English
-- `tts_models/en/ljspeech/glow-tts` - Single-speaker English with faster inference
-- `tts_models/en/ljspeech/fast_pitch` - Single-speaker English with controllable prosody
-- `tts_models/multilingual/multi-dataset/your_tts` - Multilingual with voice cloning
-- `tts_models/de/thorsten/tacotron2-DDC` - German
-- `tts_models/fr/mai/tacotron2-DDC` - French
-- `tts_models/es/mai/tacotron2-DDC` - Spanish
-
-For a complete list of available models, refer to the [Coqui TTS documentation](https://github.com/coqui-ai/TTS/wiki/Models).
-
-### Hardware Acceleration
-
-VoxRaga supports hardware acceleration for faster inference:
-
-- **CUDA**: Set `MODEL_DEVICE=cuda` to use NVIDIA GPUs
-- **MPS**: Set `MODEL_DEVICE=mps` to use Apple Silicon GPUs (M1/M2)
-- **CPU**: Set `MODEL_DEVICE=cpu` for CPU-only inference
-
-For optimal performance with GPU acceleration, set `MODEL_COMPUTE_TYPE=float16`.
-
-## API Reference
-
-### Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check endpoint |
-| `/ready` | GET | Readiness check endpoint |
-| `/live` | GET | Liveness check endpoint |
-| `/synthesize` | POST | TTS endpoint |
-| `/config` | GET | Configuration endpoint |
-| `/voices` | GET | List available voices |
-| `/languages` | GET | List available languages |
-
-### Synthesize Endpoint
-
-The `/synthesize` endpoint accepts a POST request with the following JSON body:
-
-```json
-{
-  "text": "Text to synthesize",
-  "options": {
-    "language": "en",
-    "voice": "p225",
-    "speed": 1.0,
-    "pitch": 1.0,
-    "energy": 1.0,
-    "format": "wav",
-    "sample_rate": 22050
-  }
-}
-```
-
-#### Request Parameters
-
-| Parameter | Description | Default | Range |
-|-----------|-------------|---------|-------|
-| `text` | Text to synthesize | (required) | Any text string |
-| `options.language` | Language code | `"en"` | Depends on available languages |
-| `options.voice` | Voice identifier | `"p225"` | Depends on available voices |
-| `options.speed` | Speech speed multiplier | `1.0` | `0.5` to `2.0` |
-| `options.pitch` | Voice pitch multiplier | `1.0` | `0.5` to `2.0` |
-| `options.energy` | Voice energy/volume | `1.0` | `0.5` to `2.0` |
-| `options.format` | Audio format | `"wav"` | `"wav"`, `"mp3"`, `"ogg"` |
-| `options.sample_rate` | Audio sample rate | `22050` | Common values: `8000`, `16000`, `22050`, `44100`, `48000` |
-
-#### Response
-
-The response is a binary audio file with the appropriate content type:
-- `audio/wav` for WAV format
-- `audio/mpeg` for MP3 format
-- `audio/ogg` for OGG format
-
-The response includes the following headers:
-- `X-Processing-Time`: Processing time in seconds
-- `X-Language`: Language used for synthesis
-- `X-Voice`: Voice used for synthesis
-
-### Voice Selection
-
-To list all available voices:
+### Installation
 
 ```bash
-curl -X GET http://localhost:8000/voices
+# Clone the repository
+git clone https://github.com/yourusername/vox-raga.git
+cd vox-raga
+
+# Setup development environment
+make setup-dev
+
+# Run development server
+make dev
 ```
 
-Response:
-```json
-{
-  "voices": ["p225", "p226", "p227", "p228", "..."]
-}
-```
-
-### Language Selection
-
-To list all available languages:
+### Local Deployment
 
 ```bash
-curl -X GET http://localhost:8000/languages
+# Build Docker image
+make build
+
+# Run locally
+make run
 ```
 
-Response:
-```json
-{
-  "languages": ["en", "fr", "de", "es", "..."]
-}
-```
+## Cloud Deployment
 
-## Testing the TTS Service
-
-VoxRaga provides multiple ways to test the text-to-speech functionality:
-
-### Using the API Directly
-
-You can test the API endpoints directly using curl:
-
-1. **Health Check**
-   ```bash
-   curl -X GET http://localhost:8000/health
-   ```
-
-2. **List Available Voices**
-   ```bash
-   curl -X GET http://localhost:8000/voices
-   ```
-
-3. **List Available Languages**
-   ```bash
-   curl -X GET http://localhost:8000/languages
-   ```
-
-4. **Synthesize Speech**
-   ```bash
-   curl -X POST http://localhost:8000/synthesize \
-     -H "Content-Type: application/json" \
-     -d '{
-       "text": "Hello, this is a test of the text to speech system.",
-       "options": {
-         "language": "en",
-         "voice": "p225",
-         "speed": 1.0,
-         "format": "wav"
-       }
-     }' --output test.wav
-   ```
-
-### Voice Selection and Configuration Options
-
-The TTS service supports various configuration options to customize the generated speech:
-
-#### Voice Selection
-
-The default model (VITS trained on VCTK dataset) includes over 100 different voices. Each voice has a unique identifier (e.g., "p225", "p226", etc.). To list all available voices:
+### Push to Azure Container Registry
 
 ```bash
-curl -X GET http://localhost:8000/voices
+# Login to ACR
+make acr-login
+
+# Build and push in one step
+make acr-push
 ```
 
-Or using the test script:
+### Deploy to Kubernetes with KServe
+
+VoxRaga is deployed as a KServe InferenceService, which provides scaling, monitoring, and routing capabilities.
 
 ```bash
-cd samples
-python test_tts.py --list-voices
+# Apply Kubernetes manifests
+kubectl apply -f k8s/inferenceservice.yaml
+
+# Check deployment status
+kubectl get inferenceservices
 ```
 
-#### Language Selection
+The deployment creates a KServe InferenceService that automatically scales based on demand and provides a RESTful endpoint for clients to consume.
 
-To list all available languages:
+## Configuration
 
-```bash
-curl -X GET http://localhost:8000/languages
-```
+VoxRaga is configured through environment variables:
 
-Or using the test script:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SERVER_PORT` | Port to bind to | `8888` |
+| `MODEL_NAME` | TTS model name | `tts_models/multilingual/multi-dataset/xtts_v2` |
+| `MODEL_DEVICE` | Compute device | `cuda` |
+| `SERVER_LOG_LEVEL` | Logging level | `info` |
+| `MODEL_DOWNLOAD_ROOT` | Model storage location | `/app/models` |
+| `SERVER_CACHE_DIR` | Cache directory | `/app/cache` |
 
-```bash
-cd samples
-python test_tts.py --list-languages
-```
+## API Usage
 
-#### Speech Parameters
-
-The following parameters can be adjusted when synthesizing speech:
-
-| Parameter | Description | Default | Range |
-|-----------|-------------|---------|-------|
-| `language` | Language code | "en" | Depends on available languages |
-| `voice` | Voice identifier | "p225" | Depends on available voices |
-| `speed` | Speech speed multiplier | 1.0 | 0.5 to 2.0 |
-| `pitch` | Voice pitch multiplier | 1.0 | 0.5 to 2.0 |
-| `energy` | Voice energy/volume | 1.0 | 0.5 to 2.0 |
-| `format` | Audio format | "wav" | "wav", "mp3", "ogg" |
-| `sample_rate` | Audio sample rate | 22050 | Common values: 8000, 16000, 22050, 44100, 48000 |
-
-Example with all parameters:
+### Synthesize Speech
 
 ```bash
-curl -X POST http://localhost:8000/synthesize \
+curl -X POST http://localhost:8888/synthesize \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello, this is a test of the text to speech system.",
     "options": {
       "language": "en",
-      "voice": "p226",
-      "speed": 1.2,
-      "pitch": 0.9,
-      "energy": 1.1,
-      "format": "mp3",
-      "sample_rate": 44100
+      "voice": "p225",
+      "speed": 1.0,
+      "format": "wav"
     }
-  }' --output test.mp3
+  }' --output test.wav
 ```
 
-Using the test script:
+### List Available Voices
 
 ```bash
-python test_tts.py --voice p226 --speed 1.2 --format mp3 --language en
+curl -X GET http://localhost:8888/voices
 ```
 
-Note: Not all parameters are available through the test script. For full control, use the API directly.
-
-### Using the Sample Test Script
-
-We provide a convenient test script that can process multiple text files and generate audio outputs:
-
-1. **Navigate to the samples directory**
-   ```bash
-   cd samples
-   ```
-
-2. **List available voices**
-   ```bash
-   python test_tts.py --list-voices
-   ```
-
-3. **List available languages**
-   ```bash
-   python test_tts.py --list-languages
-   ```
-
-4. **Process sample text files**
-   ```bash
-   python test_tts.py --voice p225 --format wav
-   ```
-
-5. **Customize the output**
-   ```bash
-   python test_tts.py --voice p226 --speed 1.2 --format mp3
-   ```
-
-6. **Run all tests with different voices and formats**
-   ```bash
-   ./run_all_tests.sh
-   ```
-
-The script will:
-- Read all .txt files from the `samples/input` directory
-- Send each file's content to the TTS service
-- Save the resulting audio files to the `samples/output` directory
-
-### Sample Files
-
-The repository includes several sample text files in the `samples/input` directory:
-
-- `sample1.txt`: A simple test sentence
-- `sample2.txt`: A longer paragraph about AI
-- `sample3.txt`: Text with questions and exclamations to test intonation
-
-### Output Formats
-
-The TTS service supports the following output formats:
-
-- **WAV** (.wav): Uncompressed audio, highest quality but larger file size
-- **MP3** (.mp3): Compressed audio, good balance of quality and file size
-- **OGG** (.ogg): Open format compressed audio, similar to MP3
-
-### Playing the Audio Files
-
-You can play the generated audio files using any standard media player:
-
-- **macOS**: Double-click the file or use `afplay test.wav` in the terminal
-- **Linux**: Use `aplay test.wav` or `mpg123 test.mp3` in the terminal
-- **Windows**: Double-click the file or use Windows Media Player
-
-## Advanced Usage
-
-### Batch Processing
-
-For batch processing of multiple text files, you can use the sample test script or create your own script using the API:
-
-```python
-import requests
-import os
-
-def synthesize_batch(texts, output_dir, options=None):
-    if options is None:
-        options = {"language": "en", "voice": "p225", "format": "wav"}
-    
-    for i, text in enumerate(texts):
-        response = requests.post(
-            "http://localhost:8000/synthesize",
-            json={"text": text, "options": options}
-        )
-        
-        if response.status_code == 200:
-            output_file = os.path.join(output_dir, f"output_{i}.{options['format']}")
-            with open(output_file, "wb") as f:
-                f.write(response.content)
-            print(f"Generated {output_file}")
-        else:
-            print(f"Error processing text {i}: {response.text}")
-
-# Example usage
-texts = [
-    "This is the first sample text.",
-    "This is the second sample text.",
-    "This is the third sample text."
-]
-synthesize_batch(texts, "output", {"voice": "p226", "format": "mp3"})
-```
-
-### Streaming Audio
-
-For real-time applications, you can stream the audio directly to the client:
-
-```python
-from fastapi import FastAPI, Response
-from fastapi.responses import StreamingResponse
-import requests
-import io
-
-app = FastAPI()
-
-@app.get("/stream-tts")
-async def stream_tts(text: str, voice: str = "p225"):
-    response = requests.post(
-        "http://localhost:8000/synthesize",
-        json={
-            "text": text,
-            "options": {"voice": voice, "format": "mp3"}
-        }
-    )
-    
-    if response.status_code == 200:
-        return StreamingResponse(
-            io.BytesIO(response.content),
-            media_type="audio/mpeg"
-        )
-    else:
-        return Response(
-            content=f"Error: {response.text}",
-            status_code=response.status_code
-        )
-```
-
-### Voice Cloning
-
-Some advanced models support voice cloning. To use this feature, you need to:
-
-1. Select a model that supports voice cloning (e.g., `tts_models/multilingual/multi-dataset/your_tts`)
-2. Provide a reference audio file of the target voice
-3. Use the API to clone the voice and synthesize speech
-
-This feature is not available in the current version but will be added in a future release.
-
-## Docker Deployment
-
-1. **Build the Docker Image**
-   ```bash
-   make build
-   ```
-
-2. **Push to Container Registry**
-   ```bash
-   export ACR_NAME=youracrname
-   export REGISTRY_TYPE=acr
-   make push
-   ```
-
-## Kubernetes Deployment
-
-1. **Deploy to Kubernetes**
-   ```bash
-   make deploy
-   ```
-
-The Kubernetes deployment uses the following resources:
-- Deployment with configurable replicas
-- Service for internal access
-- Ingress for external access
-- ConfigMap for configuration
-- Secret for sensitive data
-- PersistentVolumeClaim for model storage
-
-## Performance Tuning
-
-To optimize performance:
-
-1. **Use GPU acceleration** by setting `MODEL_DEVICE=cuda` or `MODEL_DEVICE=mps`
-2. **Reduce precision** by setting `MODEL_COMPUTE_TYPE=float16`
-3. **Increase cache size** by setting `SERVER_MAX_CACHE_SIZE_MB=2048`
-4. **Use a faster model** like `tts_models/en/ljspeech/glow-tts` for lower latency
-5. **Adjust CPU threads** based on your hardware by setting `MODEL_CPU_THREADS`
-
-## Running Tests
-
-VoxRaga includes a comprehensive test suite to ensure the service functions correctly. The tests are organized into different categories:
-
-- **Unit tests**: Test individual components in isolation
-- **Integration tests**: Test the interaction between components
-- **API tests**: Test the API endpoints
-- **Model tests**: Test the TTS model functionality
-
-### Running All Tests
-
-To run all tests:
+### List Available Languages
 
 ```bash
-python -m pytest
+curl -X GET http://localhost:8888/languages
 ```
 
-### Running Specific Test Categories
+## Testing
 
-To run only integration tests:
+VoxRaga includes comprehensive test suites:
 
 ```bash
-python -m pytest tests/test_integration.py
+# Run all tests
+make test
+
+# Try sample client
+cd samples
+python test_tts.py --list-voices
+python test_tts.py --voice p225 --format wav
 ```
 
-To run tests with a specific mark:
+## Performance Optimization
 
-```bash
-python -m pytest -m integration
-python -m pytest -m unit
-python -m pytest -m api
-python -m pytest -m model
-```
+For optimal performance:
 
-### Test Coverage
+- Enable hardware acceleration where available
+- Set `MODEL_COMPUTE_TYPE=float16` for faster inference
+- Consider models with lower latency for real-time applications
 
-To generate a test coverage report:
+## Monitoring
 
-```bash
-python -m pytest --cov=src
-```
+VoxRaga exposes Prometheus metrics at the `/metrics` endpoint for monitoring:
 
-For a detailed HTML coverage report:
-
-```bash
-python -m pytest --cov=src --cov-report=html
-```
-
-The HTML report will be available in the `htmlcov` directory.
-
-## Monitoring and Observability
-
-VoxRaga includes comprehensive monitoring and observability features:
-
-- **Prometheus metrics** at `/metrics` endpoint
-- **Structured logging** with configurable log levels
-- **Health checks** at `/health`, `/ready`, and `/live` endpoints
-- **Request tracing** with unique request IDs
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Request latency and throughput
+- Model inference time
+- Cache hit/miss rates
+- Resource utilization
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Testing
-
-VoxRaga includes comprehensive testing to ensure reliability and performance.
-
-### Unit and Integration Tests
-
-The `tests/` directory contains unit and integration tests for the core functionality:
-
-```bash
-# Run all tests
-pytest
-
-# Run tests with coverage
-pytest --cov=src
-
-# Run specific test categories
-pytest -m unit
-pytest -m api
-pytest -m model
-pytest -m integration
-```
-
-### Manual Testing
-
-The `manual_tests/` directory contains scripts and results for manual testing of the API endpoints:
-
-```bash
-# Install required packages
-pip install requests websocket-client
-
-# Run the manual test script
-cd manual_tests
-python test_new_endpoints.py
-```
-
-The manual tests verify the following endpoints:
-- Batch synthesis (`/batch_synthesize`)
-- Asynchronous synthesis (`/synthesize/async`)
-- WebSocket streaming (`/synthesize/ws`)
-- Voice listing by language (`/voices/{language}`)
-- Default speaker behavior
-
-For detailed results and implementation details, see `manual_tests/test_documentation.md`.
-
-### Sample Testing
-
-The `samples/` directory contains sample text files and scripts for testing the TTS service:
-
-```bash
-# List available voices
-python samples/test_tts.py --list-voices
-
-# Generate audio with a specific voice
-python samples/test_tts.py --voice p225 --format wav
-
-# Run all sample tests
-cd samples
-./run_all_tests.sh
-```
-
-The sample tests will:
-- Read all .txt files from the `samples/input` directory
-- Send each file's content to the TTS service
-- Save the resulting audio files to the `samples/output` directory
