@@ -17,7 +17,7 @@ all: build
 
 # Run tests
 test:
-	pytest -v tests/
+	PYTHONPATH=. pytest -v tests/
 
 # Clean up
 clean:
