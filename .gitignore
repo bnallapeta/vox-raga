@@ -207,3 +207,4 @@ Thumbs.db
 # models
 models/
 *.pth
+*.zip
