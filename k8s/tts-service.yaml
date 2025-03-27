@@ -16,6 +16,8 @@ spec:
           value: "tts_models/multilingual/multi-dataset/xtts_v2"
         - name: MODEL_DEVICE
           value: "cuda"
+        - name: MODEL_COMPUTE_TYPE
+          value: "float16"          
         - name: SERVER_LOG_LEVEL
           value: "info"
         - name: PYTHONPATH
