@@ -9,7 +9,7 @@ spec:
   predictor:
     containers:
       - name: kserve-container
-        image: bnracr.azurecr.io/vox-raga:0.1.0
+        image: ghcr.io/bnallapeta/vox-raga:0.1 
         imagePullPolicy: Always
         env:
         - name: MODEL_NAME
