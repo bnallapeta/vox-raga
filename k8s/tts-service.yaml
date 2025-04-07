@@ -9,7 +9,6 @@ metadata:
     autoscaling.knative.dev/target: "1"
     autoscaling.knative.dev/minScale: "1"
     autoscaling.knative.dev/maxScale: "2"
-    serving.knative.dev/queue-sidecar-resources: '{"limits":{"cpu":"100m","memory":"128Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}'
 spec:
   predictor:
     containers:
